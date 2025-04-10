@@ -32,6 +32,8 @@ dependencies:
   flutter:
     sdk: flutter
   camera: ^0.10.5+3
+  camera_android: ^0.10.0
+  camera_ios: ^0.10.0
   http: ^1.3.0
   provider: ^6.0.0
   shared_preferences: ^2.2.2

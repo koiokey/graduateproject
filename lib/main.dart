@@ -71,14 +71,7 @@ class _LoginScreenState extends State<LoginScreen> {
   String serverResponse = '';
   bool isLoading = false;
 
-
- Future<void> _login() async {
-  setState(() {
-    isLoading = true;
-    serverResponse = '';
-  });
-  
-   @override
+ @override
   void initState() {
     super.initState();
     // 初始化時檢查是否有記住密碼
@@ -87,6 +80,11 @@ class _LoginScreenState extends State<LoginScreen> {
     }
   }
 
+ Future<void> _login() async {
+  setState(() {
+    isLoading = true;
+    serverResponse = '';
+  });
 
   // 第一个请求：验证账号密码
   final loginJsonData = {
@@ -179,6 +177,9 @@ class _LoginScreenState extends State<LoginScreen> {
     } else {
       throw Exception("不支持模式");
     }
+     await appState.saveCredentials();
+      
+   
   } catch (e) {
     setState(() {
       serverResponse += "\n\n错误详情:\n${e.toString()}";
@@ -188,6 +189,7 @@ class _LoginScreenState extends State<LoginScreen> {
     );
   } finally {
     setState(() => isLoading = false);
+    
   }
 }
 
@@ -259,22 +261,21 @@ class HomeScreen extends StatefulWidget {
 
 
 class _HomeScreenState extends State<HomeScreen> {
-  String? selectedPatient; // 當前選擇的患者名稱
-  String? selectedPatientId; // 當前選擇的患者ID
+  String? selectedPatient;
+  String? selectedPatientId;
 
-    // 登出方法
+  // 登出方法
   Future<void> _logout(BuildContext context) async {
     // 清除所有登入狀態
-    appState.clearAll();
+    await appState.clearAll();
     
     // 導航回登入頁面並清除所有路由
     Navigator.pushNamedAndRemoveUntil(
       context,
-      '/', // 這是你的登入頁面路由
+      '/', // 登入頁面路由
       (Route<dynamic> route) => false,
     );
   }
-
 
   @override
   Widget build(BuildContext context) {
@@ -283,8 +284,9 @@ class _HomeScreenState extends State<HomeScreen> {
         title: Text('長照輔助系統 (ID: ${appState.centerId ?? "未登入"})'),
         backgroundColor: Colors.grey[300],
         centerTitle: true,
-         actions: [
-         IconButton(
+        actions: [
+          // 登出按鈕
+          IconButton(
             icon: Icon(Icons.logout),
             onPressed: () => _logout(context),
             tooltip: '登出',
@@ -318,7 +320,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     arguments: {
                       'patientName': selectedPatient,
                       'patientId': selectedPatientId,
-                    }, // 傳遞患者名稱和ID
+                    },
                   );
                 } else {
                   ScaffoldMessenger.of(context).showSnackBar(
@@ -334,7 +336,7 @@ class _HomeScreenState extends State<HomeScreen> {
         padding: const EdgeInsets.all(16.0),
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
-        children: [
+          children: [
             DropdownButtonFormField<String>(
               decoration: InputDecoration(
                 labelText: '選擇病患',
@@ -351,12 +353,10 @@ class _HomeScreenState extends State<HomeScreen> {
                 setState(() {
                   selectedPatient = value;
                 });
-                // 設置當前選擇的患者
                 appState.setCurrentPatient(value);
               },
             ),
             SizedBox(height: 20),
-            // 功能按鈕區
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceEvenly,
               children: [
@@ -381,7 +381,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       );
                       return;
                     }
-                    // 這裡可以處理藥單自動鍵值的邏輯
+                    // 藥單自動鍵值邏輯
                   },
                 ),
                 FeatureButton(
@@ -394,7 +394,7 @@ class _HomeScreenState extends State<HomeScreen> {
                         arguments: {
                           'patientName': selectedPatient,
                           'patientId': selectedPatientId,
-                        }, // 傳遞患者名稱和ID
+                        },
                       );
                     } else {
                       ScaffoldMessenger.of(context).showSnackBar(
@@ -411,6 +411,7 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 }
+
 class MedicineRecognitionScreen extends StatefulWidget {
   final List<CameraDescription> cameras;
   final TextEditingController usernameController;
@@ -992,13 +993,11 @@ class FeatureButton extends StatelessWidget {
   final String title;
   final VoidCallback onPressed;
 
-
-
-
-  FeatureButton({required this.title, required this.onPressed});
-
-
-
+  const FeatureButton({
+    required this.title, 
+    required this.onPressed,
+    Key? key,  // 添加 Key 參數
+  }) : super(key: key);
 
   @override
   Widget build(BuildContext context) {
@@ -1007,7 +1006,7 @@ class FeatureButton extends StatelessWidget {
         padding: const EdgeInsets.symmetric(horizontal: 8),
         child: ElevatedButton(
           style: ElevatedButton.styleFrom(
-            padding: EdgeInsets.symmetric(vertical: 20),
+            padding: const EdgeInsets.symmetric(vertical: 20),
             backgroundColor: Colors.green[200],
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(8),
@@ -1016,7 +1015,10 @@ class FeatureButton extends StatelessWidget {
           onPressed: onPressed,
           child: Text(
             title,
-            style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+            style: const TextStyle(
+              fontSize: 18, 
+              fontWeight: FontWeight.bold
+            ),
             textAlign: TextAlign.center,
           ),
         ),

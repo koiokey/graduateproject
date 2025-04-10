@@ -14,6 +14,7 @@ class AppState {
   String? _currentPatientId;
   TextEditingController usernameController = TextEditingController();
   TextEditingController passwordController = TextEditingController();
+  bool rememberMe = false;
 
   // Getters
   String? get centerId => _centerId;
@@ -55,17 +56,52 @@ class AppState {
       _currentPatientId = null;
     }
   }
-  void clearAll() {
+  
+     Future<void> init() async {
+    await _loadCredentials();
+  }
+
+  // 載入保存的憑證
+  Future<void> _loadCredentials() async {
+    final prefs = await SharedPreferences.getInstance();
+    rememberMe = prefs.getBool('rememberMe') ?? false;
+    
+    if (rememberMe) {
+      usernameController.text = prefs.getString('savedUsername') ?? '';
+      passwordController.text = prefs.getString('savedPassword') ?? '';
+    }
+  }
+
+  // 保存憑證
+  Future<void> saveCredentials() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('rememberMe', rememberMe);
+    
+    if (rememberMe) {
+      await prefs.setString('savedUsername', usernameController.text);
+      await prefs.setString('savedPassword', passwordController.text);
+    } else {
+      await prefs.remove('savedUsername');
+      await prefs.remove('savedPassword');
+    }
+  }
+
+  // 清除所有狀態
+  Future<void> clearAll() async {
     _centerId = null;
     _patients = [];
     _currentPatientName = null;
     _currentPatientId = null;
-    _username = null;
-    _password = null;
     usernameController.clear();
     passwordController.clear();
+    
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('rememberMe', false);
+    rememberMe = false;
   }
 }
+
+
 
 // Global instance
 final appState = AppState();
