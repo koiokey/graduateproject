@@ -437,18 +437,19 @@ class _MedicineRecognitionScreenState extends State<MedicineRecognitionScreen> {
   bool _isLoading = true;
   String? _errorMessage;
   File? _selectedImage;
-  List<Map<String, dynamic>> _detections = []; // 存儲檢測結果
-  List<String> _patientMedications = []; // 儲存患者藥物清單
-  List<Map<String, dynamic>> _mismatchedMedications = []; // 儲存不匹配的藥物
-  List<String> _missingMedications = []; // 儲存患者應服用但照片中沒有的藥物
-
+  List<Map<String, dynamic>> _detections = [];
+  List<Map<String, dynamic>> _patientMedications = [];
+  List<Map<String, dynamic>> _mismatchedMedications = [];
+  List<Map<String, dynamic>> _missingMedications = [];
+  bool _isProcessing = false;
+  Offset? _focusPoint; // 儲存對焦點位置
+  bool _isFocusing = false; // 標記是否正在對焦
 
   @override
   void initState() {
     super.initState();
     _initializeCamera();
   }
-
 
   Future<void> _initializeCamera() async {
     if (widget.cameras.isEmpty) {
@@ -459,17 +460,17 @@ class _MedicineRecognitionScreenState extends State<MedicineRecognitionScreen> {
       return;
     }
 
-
     try {
       _cameraController = CameraController(
-        widget.cameras[0], // 使用第一個相機（通常是後置相機）
+        widget.cameras[0],
         ResolutionPreset.medium,
+        enableAudio: false,
       );
 
-
       await _cameraController!.initialize();
+      // 確保啟用自動對焦
+      await _cameraController!.setFocusMode(FocusMode.auto);
       if (!mounted) return;
-
 
       setState(() {
         _isCameraInitialized = true;
@@ -483,15 +484,47 @@ class _MedicineRecognitionScreenState extends State<MedicineRecognitionScreen> {
     }
   }
 
-
   @override
   void dispose() {
     _cameraController?.dispose();
     super.dispose();
   }
 
+  // 處理螢幕點擊以設置對焦點
+  Future<void> _setFocusPoint(Offset point, Size screenSize) async {
+    if (_cameraController == null || !_cameraController!.value.isInitialized) {
+      return;
+    }
 
-  Future<void> _takePicture() async {
+    setState(() {
+      _focusPoint = point;
+      _isFocusing = true;
+    });
+
+    try {
+      // 將螢幕坐標轉換為相機坐標（範圍 0.0 到 1.0）
+      final double x = point.dx / screenSize.width;
+      final double y = point.dy / screenSize.height;
+
+      // 設置對焦點和曝光點
+      await _cameraController!.setFocusPoint(Offset(x, y));
+      await _cameraController!.setExposurePoint(Offset(x, y));
+
+      // 等待對焦完成（模擬延遲，實際對焦時間依設備而定）
+      await Future.delayed(Duration(milliseconds: 500));
+
+      setState(() {
+        _isFocusing = false;
+      });
+    } catch (e) {
+      debugPrint('設置對焦點失敗: $e');
+      setState(() {
+        _isFocusing = false;
+      });
+    }
+  }
+
+  Future<void> _takePictureAndAnalyze() async {
     if (_cameraController == null || !_cameraController!.value.isInitialized) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('相機未初始化')),
@@ -499,27 +532,80 @@ class _MedicineRecognitionScreenState extends State<MedicineRecognitionScreen> {
       return;
     }
 
-
-    try {
-      final XFile picture = await _cameraController!.takePicture();
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('照片已儲存: ${picture.path}')),
-      );
-
-
-        // 清除舊的檢測結果
     setState(() {
-      _detections = [];
+      _isLoading = true;
+      _isProcessing = true;
     });
 
+    try {
+      // 確保相機處於自動對焦模式
+      await _cameraController!.setFocusMode(FocusMode.auto);
 
-      // 將照片轉換為 JSON
-      final imageFile = File(picture.path);
-      _convertImageToJson(imageFile, "Yolo"); // 傳入 "Yolo" 作為 requestType
+      // 可選：如果有對焦點，重新設置對焦
+      if (_focusPoint != null) {
+        final screenSize = MediaQuery.of(context).size;
+        await _setFocusPoint(_focusPoint!, screenSize);
+      }
+
+      // 等待對焦穩定
+      await Future.delayed(Duration(milliseconds: 500));
+
+      // 拍照
+      final XFile picture = await _cameraController!.takePicture();
+      final bytes = await picture.readAsBytes();
+      final base64Image = base64Encode(bytes);
+
+      // 上傳到伺服器
+      final response = await http.post(
+        Uri.parse('https://project.1114580.xyz/data'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'username': widget.usernameController.text,
+          'password': widget.passwordController.text,
+          'requestType': 'Yolo',
+          'data': {'image': 'data:image/jpeg;base64,$base64Image'}
+        }),
+      );
+
+      if (response.statusCode == 200) {
+        final Map<String, dynamic> responseData = jsonDecode(response.body);
+        final List<Map<String, dynamic>> detections = (responseData['detections'] as List?)
+            ?.cast<Map<String, dynamic>>()
+            .toList() ?? [];
+        final String? annotatedImageBase64 = responseData['image'] as String?;
+
+        await _fetchPatientMedications();
+        await _compareMedications(detections);
+
+        if (!mounted) return;
+        await Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (context) => JsonResultScreen(
+              annotatedImageBase64: annotatedImageBase64,
+              jsonResponse: const JsonEncoder.withIndent('  ').convert(responseData),
+              detections: detections,
+              patientMedications: _patientMedications,
+              mismatchedMedications: _mismatchedMedications,
+              missingMedications: _missingMedications,
+            ),
+          ),
+        );
+      } else {
+        throw Exception('伺服器返回錯誤: ${response.statusCode}');
+      }
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('拍照失敗: $e')),
+        SnackBar(content: Text('處理失敗: $e')),
       );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+          _isProcessing = false;
+          _focusPoint = null; // 拍照後清除對焦點
+        });
+      }
     }
   }
 
@@ -551,57 +637,58 @@ class _MedicineRecognitionScreenState extends State<MedicineRecognitionScreen> {
 
 
    Future<void> _convertImageToJson(File imageFile, String requestType) async {
-  try {
-    setState(() => _isLoading = true);
-    final imageBytes = await imageFile.readAsBytes();
-    final base64Image = base64Encode(imageBytes);
+    try {
+      setState(() => _isLoading = true);
+      final imageBytes = await imageFile.readAsBytes();
+      final base64Image = base64Encode(imageBytes);
 
-    final jsonData = {
-      'username': widget.usernameController.text,
-      'password': widget.passwordController.text,
-      'requestType': requestType,
-      'data': {"image": "data:image/png;base64,$base64Image"},
-    };
+      final jsonData = {
+        'username': widget.usernameController.text,
+        'password': widget.passwordController.text,
+        'requestType': requestType,
+        'data': {"image": "data:image/png;base64,$base64Image"},
+      };
 
-    final response = await http.post(
-      Uri.parse('https://project.1114580.xyz/data'),
-      headers: {'Content-Type': 'application/json'},
-      body: jsonEncode(jsonData),
-    );
-
-    if (response.statusCode == 200) {
-      final responseData = jsonDecode(response.body);
-      
-      // 確保 detections 永遠是非 null 的 List
-      final detections = (responseData['detections'] as List?)
-          ?.map((item) => item as Map<String, dynamic>)
-          .toList() ?? <Map<String, dynamic>>[];
-
-      await _compareMedications(detections);
-
-      Navigator.push(
-        context,
-        MaterialPageRoute(
-          builder: (context) => JsonResultScreen(
-            imageFile: imageFile,
-            jsonResponse: response.body,
-            detections: detections,  // 現在保證是非 null 的 List
-            patientMedications: _patientMedications,
-            mismatchedMedications: _mismatchedMedications,
-            missingMedications: _missingMedications,
-          ),
-        ),
+      final response = await http.post(
+        Uri.parse('https://project.1114580.xyz/data'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode(jsonData),
       );
+
+      if (response.statusCode == 200) {
+        final responseData = jsonDecode(response.body);
+        final detections = (responseData['detections'] as List?)
+            ?.map((item) => item as Map<String, dynamic>)
+            .toList() ?? <Map<String, dynamic>>[];
+        final String? annotatedImageBase64 = responseData['image'] as String?;
+
+        await _compareMedications(detections);
+
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (context) => JsonResultScreen(
+              annotatedImageBase64: annotatedImageBase64,
+              jsonResponse: response.body,
+              detections: detections,
+              patientMedications: _patientMedications,
+              mismatchedMedications: _mismatchedMedications,
+              missingMedications: _missingMedications,
+            ),
+          ),
+        );
+      } else {
+        throw Exception('服務器返回錯誤: ${response.statusCode}');
+      }
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('傳送失敗: $e')),
+      );
+    } finally {
+      setState(() => _isLoading = false);
     }
-  } catch (e) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('傳送失敗: $e')),
-    );
-  } finally {
-    setState(() => _isLoading = false);
   }
-}
- Future<void> _fetchPatientMedications() async {
+Future<void> _fetchPatientMedications() async {
     if (appState.currentPatientId == null) return;
 
     try {
@@ -614,9 +701,15 @@ class _MedicineRecognitionScreenState extends State<MedicineRecognitionScreen> {
           "requestType": "sql search",
           "data": {
             "sql": """
-              SELECT d.DrugName 
+              SELECT d.DrugName, m.Dose
               FROM medications m
               INNER JOIN drugs d ON m.DrugID = d.DrugID
+              INNER JOIN (
+                  SELECT DrugID, MAX(Added_Day) AS Latest_Added_Day
+                  FROM medications
+                  WHERE PatientID = '${appState.currentPatientId}'
+                  GROUP BY DrugID
+              ) latest ON m.DrugID = latest.DrugID AND m.Added_Day = latest.Latest_Added_Day
               WHERE m.PatientID = '${appState.currentPatientId}'
             """
           }
@@ -627,7 +720,10 @@ class _MedicineRecognitionScreenState extends State<MedicineRecognitionScreen> {
       if (responseData is List) {
         setState(() {
           _patientMedications = responseData
-              .map((item) => item['DrugName'].toString().toLowerCase())
+              .map((item) => {
+                    'drugName': item['DrugName']?.toString().toLowerCase() ?? '',
+                    'dose': int.tryParse(item['Dose']?.toString() ?? '0') ?? 0,
+                  })
               .toList();
         });
       }
@@ -636,51 +732,129 @@ class _MedicineRecognitionScreenState extends State<MedicineRecognitionScreen> {
     }
   }
 
-
-  @override
+  
 @override
-Widget build(BuildContext context) {
-  return Scaffold(
-    appBar: AppBar(
-      title: Text('藥物辨識檢測'),
-      backgroundColor: Colors.grey[300],
-    ),
-    body: Padding(
-      padding: const EdgeInsets.all(16.0),
-      child: Column(
-        children: [
-          if (_isLoading)
-            Expanded(child: Center(child: CircularProgressIndicator()))
-          else if (_errorMessage != null)
-            Expanded(child: Center(child: Text(_errorMessage!, style: TextStyle(color: Colors.red))))
-          else if (_isCameraInitialized)
-            Expanded(
-              child: Column(
-                children: [
-                  Expanded(child: CameraPreview(_cameraController!)),
-                  SizedBox(height: 10),
-                  ElevatedButton(
-                    onPressed: _takePicture,
-                    style: ElevatedButton.styleFrom(backgroundColor: Colors.green[300]),
-                    child: Text('拍照辨識'),
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: Text('藥物辨識檢測'),
+        backgroundColor: Colors.grey[300],
+      ),
+      body: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: Column(
+          children: [
+            if (_isLoading)
+              Expanded(
+                child: Center(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      CircularProgressIndicator(),
+                      SizedBox(height: 20),
+                      Text('正在分析藥物...', style: TextStyle(fontSize: 16)),
+                    ],
                   ),
-                ],
+                ),
+              )
+            else if (_errorMessage != null)
+              Expanded(
+                child: Center(
+                  child: Text(
+                    _errorMessage!,
+                    style: TextStyle(color: Colors.red, fontSize: 18),
+                    textAlign: TextAlign.center,
+                  ),
+                ),
+              )
+            else if (_isCameraInitialized)
+              Expanded(
+                child: Column(
+                  children: [
+                    // 相機預覽（添加點擊對焦）
+                    Expanded(
+                      flex: 8,
+                      child: Stack(
+                        children: [
+                          ClipRRect(
+                            borderRadius: BorderRadius.circular(12),
+                            child: CameraPreview(_cameraController!),
+                          ),
+                          // 點擊對焦框
+                          GestureDetector(
+                            onTapDown: (details) {
+                              final screenSize = MediaQuery.of(context).size;
+                              _setFocusPoint(details.localPosition, screenSize);
+                            },
+                            child: Container(
+                              color: Colors.transparent,
+                              child: Center(
+                                child: _focusPoint != null
+                                    ? Container(
+                                        width: 100,
+                                        height: 100,
+                                        decoration: BoxDecoration(
+                                          border: Border.all(
+                                            color: _isFocusing ? Colors.yellow : Colors.white,
+                                            width: 2,
+                                          ),
+                                          borderRadius: BorderRadius.circular(8),
+                                        ),
+                                      )
+                                    : null,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    SizedBox(height: 20),
+                    // 拍照按鈕
+                    ElevatedButton.icon(
+                      onPressed: _isProcessing ? null : _takePictureAndAnalyze,
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.green[400],
+                        minimumSize: Size(double.infinity, 50),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                      ),
+                      icon: Icon(Icons.camera_alt, color: Colors.white),
+                      label: Text(
+                        _isProcessing ? '處理中...' : '拍照並立即辨識',
+                        style: TextStyle(fontSize: 18, color: Colors.white),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            // 從相簿選擇按鈕
+            Padding(
+              padding: EdgeInsets.only(top: 20),
+              child: ElevatedButton.icon(
+                onPressed: _isProcessing ? null : _pickImageFromGallery,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.blue[400],
+                  minimumSize: Size(double.infinity, 50),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                ),
+                icon: Icon(Icons.photo_library, color: Colors.white),
+                label: Text(
+                  '從相簿選擇照片',
+                  style: TextStyle(fontSize: 18, color: Colors.white),
+                ),
               ),
             ),
-          SizedBox(height: 20),
-          ElevatedButton(
-            onPressed: _pickImageFromGallery,
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.blue[300]),
-            child: Text('從相簿選擇照片'),
-          ),
-        ],
+          ],
+        ),
       ),
-    ),
-  );
-}
-   Future<void> _compareMedications(List<Map<String, dynamic>> detections) async {
+    );
+  }
+Future<void> _compareMedications(List<Map<String, dynamic>> detections) async {
     await _fetchPatientMedications();
-    
+
     final detectedLabels = detections
         .map((d) => d['label']?.toString().toLowerCase().trim())
         .whereType<String>()
@@ -690,168 +864,184 @@ Widget build(BuildContext context) {
       // 照片有但患者不應服用的藥物
       _mismatchedMedications = detections.where((d) {
         final label = d['label']?.toString().toLowerCase().trim();
-        return label != null && !_patientMedications.contains(label);
+        return label != null &&
+            !_patientMedications.any((med) => med['drugName'] == label);
       }).toList();
 
-      // 患者應服用但照片沒有的藥物
-      _missingMedications = _patientMedications.where((med) {
-        return !detectedLabels.contains(med.toLowerCase().trim());
-      }).toList();
+      // 計算缺少的藥物和顆數
+      _missingMedications = _patientMedications.map((med) {
+        final drugName = med['drugName'] as String;
+        final expectedDose = med['dose'] as int;
+        // 計算檢測到的該藥物顆數
+        final detectedCount = detectedLabels
+            .where((label) => label == drugName)
+            .length;
+        // 計算缺少的顆數
+        final missingCount = expectedDose - detectedCount;
+        return {
+          'drugName': drugName,
+          'missingCount': missingCount > 0 ? missingCount : 0,
+        };
+      }).where((med) => (med['missingCount'] as int) > 0).toList();
     });
   }
 }
 class JsonResultScreen extends StatelessWidget {
-  final File? imageFile;
+  final String? annotatedImageBase64;
   final String jsonResponse;
   final List<Map<String, dynamic>> detections;
-  final List<String> patientMedications;
+  final List<Map<String, dynamic>> patientMedications; // 修改類型
   final List<Map<String, dynamic>> mismatchedMedications;
-   final List<String> missingMedications;
+  final List<Map<String, dynamic>> missingMedications; // 修改類型
 
   const JsonResultScreen({
+    required this.annotatedImageBase64,
     required this.jsonResponse,
     required this.detections,
     required this.patientMedications,
     required this.mismatchedMedications,
     required this.missingMedications,
-    this.imageFile,
     Key? key,
   }) : super(key: key);
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: Text('辨識結果'),
-      ),
-      body: DefaultTabController(
-        length: 3,
-        child: Column(
-          children: [
-            if (imageFile != null) 
-              Container(
-                height: 200,
-                child: Image.file(imageFile!, fit: BoxFit.contain),
+      appBar: AppBar(title: Text('辨識結果')),
+      body: Column(
+        children: [
+          if (annotatedImageBase64 != null && annotatedImageBase64!.isNotEmpty)
+            Container(
+              height: 300,
+              decoration: BoxDecoration(
+                border: Border.all(color: Colors.grey),
+                borderRadius: BorderRadius.circular(8),
               ),
-            TabBar(
-              tabs: [
-                Tab(text: '分析結果'),
-                Tab(text: '藥物比對'),
-                Tab(text: '原始JSON'),
-              ],
+              child: Image.memory(
+                base64Decode(annotatedImageBase64!.split(',').last),
+                fit: BoxFit.contain,
+                errorBuilder: (context, error, stackTrace) {
+                  return Center(child: Text('圖片載入失敗'));
+                },
+              ),
+            )
+          else
+            Container(
+              height: 100,
+              alignment: Alignment.center,
+              child: Text('無標註圖片', style: TextStyle(color: Colors.grey)),
             ),
-            Expanded(
-              child: TabBarView(
+          Expanded(
+            child: DefaultTabController(
+              length: 2,
+              child: Column(
                 children: [
-                  _buildDetectionList(),
-                  _buildComparisonResult(),
-                  _buildRawJsonViewer(),
+                  TabBar(
+                    tabs: [
+                      Tab(text: '藥物比對'),
+                      Tab(text: '原始JSON'),
+                    ],
+                  ),
+                  Expanded(
+                    child: TabBarView(
+                      children: [
+                        _buildComparisonResult(),
+                        _buildRawJsonViewer(),
+                      ],
+                    ),
+                  ),
                 ],
               ),
             ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildDetectionList() {
-    return ListView.builder(
-      itemCount: detections.length,
-      itemBuilder: (context, index) {
-        final d = detections[index];
-        return ListTile(
-          title: Text(d['label']?.toString() ?? '未知標籤'),
-          subtitle: Text('置信度: ${(d['confidence'] * 100).toStringAsFixed(2)}%'),
-        );
-      },
-    );
-  }
-
- Widget _buildComparisonResult() {
-  return Column(
-    children: [
-      // 患者應服用的藥物列表
-      Padding(
-        padding: const EdgeInsets.all(8.0),
-        child: Text(
-          '患者應服用的藥物 (${patientMedications.length}種):',
-          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
-        ),
-      ),
-      Wrap(
-        spacing: 8,
-        children: patientMedications
-            .map((med) => Chip(
-                  label: Text(med),
-                  backgroundColor: Colors.green[100],
-                ))
-            .toList(),
-      ),
-      Divider(),
-
-      // 照片有但患者不應服用的藥物
-      if (mismatchedMedications.isNotEmpty) ...[
-        Padding(
-          padding: const EdgeInsets.all(8.0),
-          child: Text(
-            '不相符的藥物 (${mismatchedMedications.length}種):',
-            style: TextStyle(
-              fontWeight: FontWeight.bold,
-              fontSize: 16,
-              color: Colors.red,
-            ),
           ),
-        ),
-        ...mismatchedMedications.map((med) => ListTile(
-              leading: Icon(Icons.warning, color: Colors.orange),
-              title: Text(med['label']?.toString() ?? '未知標籤'),
-              subtitle: Text('置信度: ${(med['confidence'] * 100).toStringAsFixed(2)}%'),
-            )),
-        Divider(),
-      ],
+        ],
+      ),
+    );
+  }
 
-      // 患者應服用但照片沒有的藥物
-      if (missingMedications.isNotEmpty) ...[  // 這裡修改為 missingMedications
+  Widget _buildComparisonResult() {
+    return Column(
+      children: [
+        // 患者應服用的藥物列表
         Padding(
           padding: const EdgeInsets.all(8.0),
           child: Text(
-            '可能缺少的藥物 (${missingMedications.length}種):',  // 這裡修改為 missingMedications
-            style: TextStyle(
-              fontWeight: FontWeight.bold,
-              fontSize: 16,
-              color: Colors.blue,
-            ),
+            '患者應服用的藥物 (${patientMedications.length}種):',
+            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
           ),
         ),
         Wrap(
           spacing: 8,
-          children: missingMedications  // 這裡修改為 missingMedications
+          children: patientMedications
               .map((med) => Chip(
-                    label: Text(med),
-                    backgroundColor: Colors.blue[100],
-                    deleteIcon: Icon(Icons.warning, size: 18),
-                    onDeleted: () {},
+                    label: Text('${med['drugName']} - ${med['dose']}顆'),
+                    backgroundColor: Colors.green[100],
                   ))
               .toList(),
         ),
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8),
-          child: Text(
-            '這些藥物應該出現但未在照片中辨識到',
-            style: TextStyle(color: Colors.blue[800], fontSize: 14),
+        Divider(),
+
+        // 照片有但患者不應服用的藥物
+        if (mismatchedMedications.isNotEmpty) ...[
+          Padding(
+            padding: const EdgeInsets.all(8.0),
+            child: Text(
+              '不相符的藥物 (${mismatchedMedications.length}種):',
+              style: TextStyle(
+                fontWeight: FontWeight.bold,
+                fontSize: 16,
+                color: Colors.red,
+              ),
+            ),
           ),
-        ),
+          ...mismatchedMedications.map((med) => ListTile(
+                leading: Icon(Icons.warning, color: Colors.orange),
+                title: Text(med['label']?.toString() ?? '未知標籤'),
+                subtitle: Text('置信度: ${(med['confidence'] * 100).toStringAsFixed(2)}%'),
+              )),
+          Divider(),
+        ],
+
+        // 缺少的藥物和顆數
+        if (missingMedications.isNotEmpty) ...[
+          Padding(
+            padding: const EdgeInsets.all(8.0),
+            child: Text(
+              '缺少的藥物 (${missingMedications.length}種):',
+              style: TextStyle(
+                fontWeight: FontWeight.bold,
+                fontSize: 16,
+                color: Colors.blue,
+              ),
+            ),
+          ),
+          Wrap(
+            spacing: 8,
+            children: missingMedications
+                .map((med) => Chip(
+                      label: Text('${med['drugName']} - ${med['missingCount']}顆'),
+                      backgroundColor: Colors.blue[100],
+                      deleteIcon: Icon(Icons.warning, size: 18),
+                      onDeleted: () {},
+                    ))
+                .toList(),
+          ),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8),
+            child: Text(
+              '這些藥物應該出現但未在照片中辨識到',
+              style: TextStyle(color: Colors.blue[800], fontSize: 14),
+            ),
+          ),
+        ],
       ],
-    ],
-  );
-}
+    );
+  }
 
   Widget _buildRawJsonViewer() {
     try {
       final jsonData = jsonDecode(jsonResponse);
       final formattedJson = JsonEncoder.withIndent('  ').convert(jsonData);
-      
       return Container(
         padding: EdgeInsets.all(8),
         decoration: BoxDecoration(
@@ -927,8 +1117,19 @@ class _PatientManagementScreenState extends State<PatientManagementScreen> {
         "username": appState.username ?? '',
         "password": appState.password ?? '',
         "requestType": "sql search",
-        "data": { 
-          "sql": "SELECT PatientID, Added_Day, DrugID, Timing, Dose FROM Medications WHERE PatientID = '$selectedPatientId'"
+        "data": {
+          "sql": """
+            SELECT m.PatientID, m.Added_Day, d.DrugName, m.Timing, m.Dose, m.DrugID
+            FROM Medications m
+            INNER JOIN drugs d ON m.DrugID = d.DrugID
+            INNER JOIN (
+                SELECT DrugID, MAX(Added_Day) AS Latest_Added_Day
+                FROM Medications
+                WHERE PatientID = '$selectedPatientId'
+                GROUP BY DrugID
+            ) latest ON m.DrugID = latest.DrugID AND m.Added_Day = latest.Latest_Added_Day
+            WHERE m.PatientID = '$selectedPatientId'
+          """
         }
       };
 
@@ -943,18 +1144,34 @@ class _PatientManagementScreenState extends State<PatientManagementScreen> {
       );
 
       final responseBody = response.body;
+
+      // 調試：打印原始響應
+      debugPrint('Server response body: $responseBody');
+
+      // 檢查響應是否為空
+      if (responseBody.isEmpty) {
+        throw Exception('服務器返回空響應');
+      }
+
       final responseData = jsonDecode(responseBody);
-     
+
+      // 調試：打印解析後的數據
+      debugPrint('Parsed response data: $responseData');
+
       setState(() {
         serverResponse = responseBody;
         if (responseData is List) {
           medications = responseData;
+        } else {
+          throw Exception('預期 List 格式，但收到: ${responseData.runtimeType}');
         }
       });
     } catch (e) {
       setState(() {
-        serverResponse = '錯誤: ${e.toString()}';
+        serverResponse = '';
+        isLoading = false;
       });
+      debugPrint('Error in _fetchPatientMedications: $e');
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('獲取藥物資料失敗: ${e.toString()}')),
       );
@@ -963,14 +1180,56 @@ class _PatientManagementScreenState extends State<PatientManagementScreen> {
     }
   }
 
+  Widget _buildMedicationCard(Map<String, dynamic> medication) {
+    debugPrint('Medication data: $medication');
+
+    return Card(
+      margin: EdgeInsets.symmetric(vertical: 8),
+      elevation: 3,
+      child: InkWell(
+        onTap: () => _updateMedication(medication),
+        child: Padding(
+          padding: const EdgeInsets.all(12.0),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                '藥物名稱: ${medication['DrugName']?.toString() ?? '未知'}',
+                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+              ),
+              SizedBox(height: 8),
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      '服用時間: ${medication['Timing']?.toString() ?? '無'}',
+                    ),
+                  ),
+                  Expanded(
+                    child: Text(
+                      '劑量: ${medication['Dose']?.toString() ?? '無'}',
+                    ),
+                  ),
+                ],
+              ),
+              SizedBox(height: 8),
+              Text(
+                '添加日期: ${medication['Added_Day']?.toString() ?? '無'}',
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   Future<void> _updateMedication(Map<String, dynamic> medication) async {
     final drugId = medication['DrugID']?.toString() ?? '';
     final patientId = medication['PatientID']?.toString() ?? '';
 
-    // 控制器初始化
+    // 控制器初始化（移除 Added_Day）
     final timingController = TextEditingController(text: medication['Timing']?.toString() ?? '');
     final doseController = TextEditingController(text: medication['Dose']?.toString() ?? '');
-    final addedDayController = TextEditingController(text: medication['Added_Day']?.toString() ?? '');
 
     await showDialog(
       context: context,
@@ -988,10 +1247,6 @@ class _PatientManagementScreenState extends State<PatientManagementScreen> {
                 controller: doseController,
                 decoration: InputDecoration(labelText: '劑量'),
               ),
-              TextField(
-                controller: addedDayController,
-                decoration: InputDecoration(labelText: '添加日期 (YYYY-MM-DD)'),
-              ),
             ],
           ),
         ),
@@ -1002,12 +1257,11 @@ class _PatientManagementScreenState extends State<PatientManagementScreen> {
           ),
           ElevatedButton(
             onPressed: () async {
-              // 構建更新SQL語句
+              // 構建更新SQL語句（移除 Added_Day）
               final sql = """
                 UPDATE Medications 
                 SET Timing = '${timingController.text}',
-                    Dose = '${doseController.text}',
-                    Added_Day = '${addedDayController.text}'
+                    Dose = '${doseController.text}'
                 WHERE DrugID = '$drugId' AND PatientID = '$patientId'
               """;
 
@@ -1050,40 +1304,27 @@ class _PatientManagementScreenState extends State<PatientManagementScreen> {
     );
   }
 
-  Widget _buildMedicationCard(Map<String, dynamic> medication) {
-    return Card(
-      margin: EdgeInsets.symmetric(vertical: 8),
-      elevation: 3,
-      child: InkWell(
-        onTap: () => _updateMedication(medication),
-        child: Padding(
-          padding: const EdgeInsets.all(12.0),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text('藥物ID: ${medication['DrugID'] ?? '未知'}',
-                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-              SizedBox(height: 8),
-              Row(
-                children: [
-                  Expanded(child: Text('服用時間: ${medication['Timing'] ?? '無'}')),
-                  Expanded(child: Text('劑量: ${medication['Dose'] ?? '無'}')),
-                ],
-              ),
-              SizedBox(height: 8),
-              Text('添加日期: ${medication['Added_Day'] ?? '無'}'),
-            ],
+  Widget _buildRawJsonViewer() {
+    if (serverResponse.isEmpty) {
+      return Container(
+        padding: EdgeInsets.all(8),
+        decoration: BoxDecoration(
+          color: Colors.grey[100],
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: SingleChildScrollView(
+          child: Text(
+            '無數據',
+            style: TextStyle(fontFamily: 'monospace', fontSize: 12),
           ),
         ),
-      ),
-    );
-  }
+      );
+    }
 
-  Widget _buildRawJsonViewer() {
     try {
       final jsonData = jsonDecode(serverResponse);
       final formattedJson = JsonEncoder.withIndent('  ').convert(jsonData);
-      
+
       return Container(
         padding: EdgeInsets.all(8),
         decoration: BoxDecoration(
@@ -1098,6 +1339,7 @@ class _PatientManagementScreenState extends State<PatientManagementScreen> {
         ),
       );
     } catch (e) {
+      debugPrint('JSON parsing error: $e');
       return Container(
         padding: EdgeInsets.all(8),
         decoration: BoxDecoration(
@@ -1105,8 +1347,8 @@ class _PatientManagementScreenState extends State<PatientManagementScreen> {
           borderRadius: BorderRadius.circular(8),
         ),
         child: SingleChildScrollView(
-          child: Text(
-            serverResponse.isEmpty ? '無數據' : serverResponse,
+          child: SelectableText(
+            'JSON解析錯誤: ${e.toString()}\n原始內容:\n$serverResponse',
             style: TextStyle(fontFamily: 'monospace', fontSize: 12),
           ),
         ),
@@ -1142,7 +1384,6 @@ class _PatientManagementScreenState extends State<PatientManagementScreen> {
                   Text('患者: $selectedPatient (ID: $selectedPatientId)',
                       style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
                   SizedBox(height: 16),
-                 
                   if (showRawJson)
                     Expanded(child: _buildRawJsonViewer())
                   else
@@ -1157,7 +1398,6 @@ class _PatientManagementScreenState extends State<PatientManagementScreen> {
                               },
                             ),
                     ),
-                 
                   if (serverResponse.isNotEmpty && !showRawJson)
                     Padding(
                       padding: const EdgeInsets.only(top: 8.0),
@@ -1172,7 +1412,6 @@ class _PatientManagementScreenState extends State<PatientManagementScreen> {
     );
   }
 }
-
 
 class FeatureButton extends StatelessWidget {
   final String title;
