@@ -9,21 +9,18 @@ import 'package:flutter/services.dart'; // 用於 Clipboard
 
 
 void main() async {
-  WidgetsFlutterBinding.ensureInitialized(); // 確保 Flutter 初始化
-  await appState.init(); // 初始化 AppState 並載入保存的憑證
-  final cameras = await availableCameras(); // 獲取可用相機
+  WidgetsFlutterBinding.ensureInitialized();
+  await appState.init();
+  final cameras = await availableCameras();
   runApp(MyApp(cameras: cameras));
 }
 
-
 class MyApp extends StatelessWidget {
   final List<CameraDescription> cameras;
-  final TextEditingController usernameController = TextEditingController(); // 新增 usernameController
-  final TextEditingController passwordController = TextEditingController(); // 新增 passwordController
-
+  final TextEditingController usernameController = TextEditingController();
+  final TextEditingController passwordController = TextEditingController();
 
   MyApp({required this.cameras});
-
 
   @override
   Widget build(BuildContext context) {
@@ -45,6 +42,11 @@ class MyApp extends StatelessWidget {
               passwordController: passwordController,
             ),
         '/patient_management': (context) => PatientManagementScreen(),
+        '/prescription_capture': (context) => PrescriptionCaptureScreen(
+              cameras: cameras,
+              usernameController: usernameController,
+              passwordController: passwordController,
+            ),
       },
     );
   }
@@ -55,185 +57,159 @@ class LoginScreen extends StatefulWidget {
   final TextEditingController usernameController;
   final TextEditingController passwordController;
 
-
   LoginScreen({
     required this.usernameController,
     required this.passwordController,
   });
 
-
   @override
   _LoginScreenState createState() => _LoginScreenState();
 }
 
-
 class _LoginScreenState extends State<LoginScreen> {
-  String serverResponse = '';
   bool isLoading = false;
 
- @override
+  @override
   void initState() {
     super.initState();
-    // 初始化時檢查是否有記住密碼
     if (appState.rememberMe) {
       // 已經在 AppState.init() 中載入了帳號密碼
     }
   }
 
- Future<void> _login() async {
-  setState(() {
-    isLoading = true;
-    serverResponse = '';
-  });
-
-  // 第一个请求：验证账号密码
-  final loginJsonData = {
-    "username": widget.usernameController.text,
-    "password": widget.passwordController.text,
-    "requestType": "sql search",
-    "data": {
-      "sql": "SELECT CenterID, CenterAccount, CenterPassword FROM Accounts"
-    }
-  };
-
-
-  try {
-    // 发送第一个请求
-    final loginResponse = await http.post(
-      Uri.parse('https://project.1114580.xyz/data'),
-      headers: {'Content-Type': 'application/json'},
-      body: jsonEncode(loginJsonData),
-    );
-
-
-    final loginResponseBody = loginResponse.body;
+  Future<void> _login() async {
     setState(() {
-      serverResponse = "登录响应:\n$loginResponseBody";
+      isLoading = true;
     });
 
-
-    dynamic loginResponseData = jsonDecode(loginResponseBody);
-   
-    if (loginResponseData is List) {
-      bool isValid = false;
-      String? matchedCenterId;
-     
-      for (var account in loginResponseData) {
-        if (account['CenterAccount'] == widget.usernameController.text &&
-            account['CenterPassword'] == widget.passwordController.text) {
-          isValid = true;
-          matchedCenterId = account['CenterID']?.toString();
-          break;
-        }
-      }
-
-
-      if (isValid && matchedCenterId != null) {
-        // 設置全局 CenterID
-        appState.setCenterId(matchedCenterId);
-        if (isValid && matchedCenterId != null) {
-    appState.setCenterId(matchedCenterId);
-   
-    // 第二個請求：獲取患者列表
-    final patientsJsonData = {
+    final loginJsonData = {
       "username": widget.usernameController.text,
       "password": widget.passwordController.text,
       "requestType": "sql search",
       "data": {
-        "sql": "SELECT PatientID, PatientName FROM Patients WHERE CenterID = '$matchedCenterId'"
+        "sql": "SELECT CenterID, CenterAccount, CenterPassword FROM Accounts"
       }
     };
 
+    try {
+      final loginResponse = await http.post(
+        Uri.parse('https://project.1114580.xyz/data'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode(loginJsonData),
+      );
 
-    final patientsResponse = await http.post(
-      Uri.parse('https://project.1114580.xyz/data'),
-      headers: {'Content-Type': 'application/json'},
-      body: jsonEncode(patientsJsonData),
-    );
+      dynamic loginResponseData = jsonDecode(loginResponse.body);
 
+      if (loginResponseData is List) {
+        bool isValid = false;
+        String? matchedCenterId;
 
-    final patientsResponseBody = patientsResponse.body;
-    setState(() {
-      serverResponse += "\n\n患者列表響應:\n$patientsResponseBody";
-    });
+        for (var account in loginResponseData) {
+          if (account['CenterAccount'] == widget.usernameController.text &&
+              account['CenterPassword'] == widget.passwordController.text) {
+            isValid = true;
+            matchedCenterId = account['CenterID']?.toString();
+            break;
+          }
+        }
 
+        if (isValid && matchedCenterId != null) {
+          appState.setCenterId(matchedCenterId);
 
-    dynamic patientsResponseData = jsonDecode(patientsResponseBody);
-   
-    if (patientsResponseData is List && patientsResponseData.isNotEmpty) {
-      // 直接傳遞原始數據，讓 AppState 處理類型轉換
-      appState.setPatients(patientsResponseData);
-    }
-    appState.setCredentials(
-    widget.usernameController.text, // 用户名
-    widget.passwordController.text  // 密码
-  );
+          final patientsJsonData = {
+            "username": widget.usernameController.text,
+            "password": widget.passwordController.text,
+            "requestType": "sql search",
+            "data": {
+              "sql": "SELECT PatientID, PatientName FROM Patients WHERE CenterID = '$matchedCenterId'"
+            }
+          };
 
-    Navigator.pushReplacementNamed(context, '/home');
-  }
+          final patientsResponse = await http.post(
+            Uri.parse('https://project.1114580.xyz/data'),
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode(patientsJsonData),
+          );
+
+          dynamic patientsResponseData = jsonDecode(patientsResponse.body);
+
+          if (patientsResponseData is List && patientsResponseData.isNotEmpty) {
+            appState.setPatients(patientsResponseData);
+          }
+
+          appState.setCredentials(
+            widget.usernameController.text,
+            widget.passwordController.text,
+          );
+
+          await appState.saveCredentials();
+
+          Navigator.pushReplacementNamed(context, '/home');
+        } else {
+          throw Exception("帳號或密碼不正確");
+        }
       } else {
         throw Exception("帳號或密碼不正確");
       }
-    } else {
-      throw Exception("不支持模式");
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text("錯誤: ${e.toString()}")),
+      );
+    } finally {
+      setState(() => isLoading = false);
     }
-     await appState.saveCredentials();
-      
-   
-  } catch (e) {
-    setState(() {
-      serverResponse += "\n\n错误详情:\n${e.toString()}";
-    });
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text("错误: ${e.toString()}")),
-    );
-  } finally {
-    setState(() => isLoading = false);
-    
   }
-}
-
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Colors.green[100],
-      body: SingleChildScrollView(
-        child: Padding(
-          padding: const EdgeInsets.all(16.0),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              // 登入表單部分...
-              TextField(
-                controller: widget.usernameController,
-                decoration: InputDecoration(labelText: '帳號'),
-              ),
-              TextField(
-                controller: widget.passwordController,
-                decoration: InputDecoration(labelText: '密碼'),
-                obscureText: true,
-              ),
-              ElevatedButton(
-                onPressed: isLoading ? null : _login,
-                child: isLoading ? CircularProgressIndicator() : Text('登入'),
-              ),
-             
-              // 顯示伺服器回應
-              if (serverResponse.isNotEmpty) ...[
-                SizedBox(height: 20),
-                Text('伺服器回應:', style: TextStyle(fontWeight: FontWeight.bold)),
-                Card(
-                  child: Padding(
-                    padding: const EdgeInsets.all(8.0),
-                    child: SelectableText(
-                      serverResponse,
-                      style: TextStyle(fontFamily: 'monospace'),
-                    ),
+      body: Center(
+        child: SingleChildScrollView(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 32.0),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                TextField(
+                  controller: widget.usernameController,
+                  decoration: InputDecoration(
+                    labelText: '帳號',
+                    border: OutlineInputBorder(),
+                    filled: true,
+                    fillColor: Colors.white,
                   ),
                 ),
+                SizedBox(height: 16),
+                TextField(
+                  controller: widget.passwordController,
+                  decoration: InputDecoration(
+                    labelText: '密碼',
+                    border: OutlineInputBorder(),
+                    filled: true,
+                    fillColor: Colors.white,
+                  ),
+                  obscureText: true,
+                ),
+                SizedBox(height: 24),
+                ElevatedButton(
+                  onPressed: isLoading ? null : _login,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.green[400],
+                    padding: EdgeInsets.symmetric(horizontal: 40, vertical: 16),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                  ),
+                  child: isLoading
+                      ? CircularProgressIndicator(color: Colors.white)
+                      : Text(
+                          '登入',
+                          style: TextStyle(fontSize: 18, color: Colors.white),
+                        ),
+                ),
               ],
-            ],
+            ),
           ),
         ),
       ),
@@ -247,32 +223,25 @@ class HomeScreen extends StatefulWidget {
   final TextEditingController usernameController;
   final TextEditingController passwordController;
 
-
   HomeScreen({
     required this.cameras,
     required this.usernameController,
     required this.passwordController,
   });
 
-
   @override
   _HomeScreenState createState() => _HomeScreenState();
 }
-
 
 class _HomeScreenState extends State<HomeScreen> {
   String? selectedPatient;
   String? selectedPatientId;
 
-  // 登出方法
   Future<void> _logout(BuildContext context) async {
-    // 清除所有登入狀態
     await appState.clearAll();
-    
-    // 導航回登入頁面並清除所有路由
     Navigator.pushNamedAndRemoveUntil(
       context,
-      '/', // 登入頁面路由
+      '/',
       (Route<dynamic> route) => false,
     );
   }
@@ -285,7 +254,6 @@ class _HomeScreenState extends State<HomeScreen> {
         backgroundColor: Colors.grey[300],
         centerTitle: true,
         actions: [
-          // 登出按鈕
           IconButton(
             icon: Icon(Icons.logout),
             onPressed: () => _logout(context),
@@ -308,7 +276,9 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
             ListTile(
               title: Text('藥單自動鍵值'),
-              onTap: () {},
+              onTap: () {
+                Navigator.pushNamed(context, '/prescription_capture');
+              },
             ),
             ListTile(
               title: Text('患者資料管理'),
@@ -381,7 +351,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       );
                       return;
                     }
-                    // 藥單自動鍵值邏輯
+                    Navigator.pushNamed(context, '/prescription_capture');
                   },
                 ),
                 FeatureButton(
@@ -468,8 +438,10 @@ class _MedicineRecognitionScreenState extends State<MedicineRecognitionScreen> {
       );
 
       await _cameraController!.initialize();
-      // 確保啟用自動對焦
+      // 設置自動對焦
       await _cameraController!.setFocusMode(FocusMode.auto);
+      // 禁用閃光燈
+      await _cameraController!.setFlashMode(FlashMode.off);
       if (!mounted) return;
 
       setState(() {
@@ -490,7 +462,6 @@ class _MedicineRecognitionScreenState extends State<MedicineRecognitionScreen> {
     super.dispose();
   }
 
-  // 處理螢幕點擊以設置對焦點
   Future<void> _setFocusPoint(Offset point, Size screenSize) async {
     if (_cameraController == null || !_cameraController!.value.isInitialized) {
       return;
@@ -502,15 +473,11 @@ class _MedicineRecognitionScreenState extends State<MedicineRecognitionScreen> {
     });
 
     try {
-      // 將螢幕坐標轉換為相機坐標（範圍 0.0 到 1.0）
       final double x = point.dx / screenSize.width;
       final double y = point.dy / screenSize.height;
 
-      // 設置對焦點和曝光點
       await _cameraController!.setFocusPoint(Offset(x, y));
       await _cameraController!.setExposurePoint(Offset(x, y));
-
-      // 等待對焦完成（模擬延遲，實際對焦時間依設備而定）
       await Future.delayed(Duration(milliseconds: 500));
 
       setState(() {
@@ -538,10 +505,12 @@ class _MedicineRecognitionScreenState extends State<MedicineRecognitionScreen> {
     });
 
     try {
-      // 確保相機處於自動對焦模式
+      // 確保自動對焦
       await _cameraController!.setFocusMode(FocusMode.auto);
+      // 確保閃光燈關閉
+      await _cameraController!.setFlashMode(FlashMode.off);
 
-      // 可選：如果有對焦點，重新設置對焦
+      // 可選：設置對焦點
       if (_focusPoint != null) {
         final screenSize = MediaQuery.of(context).size;
         await _setFocusPoint(_focusPoint!, screenSize);
@@ -603,7 +572,7 @@ class _MedicineRecognitionScreenState extends State<MedicineRecognitionScreen> {
         setState(() {
           _isLoading = false;
           _isProcessing = false;
-          _focusPoint = null; // 拍照後清除對焦點
+          _focusPoint = null;
         });
       }
     }
@@ -771,7 +740,6 @@ Future<void> _fetchPatientMedications() async {
               Expanded(
                 child: Column(
                   children: [
-                    // 相機預覽（添加點擊對焦）
                     Expanded(
                       flex: 8,
                       child: Stack(
@@ -780,7 +748,6 @@ Future<void> _fetchPatientMedications() async {
                             borderRadius: BorderRadius.circular(12),
                             child: CameraPreview(_cameraController!),
                           ),
-                          // 點擊對焦框
                           GestureDetector(
                             onTapDown: (details) {
                               final screenSize = MediaQuery.of(context).size;
@@ -809,7 +776,6 @@ Future<void> _fetchPatientMedications() async {
                       ),
                     ),
                     SizedBox(height: 20),
-                    // 拍照按鈕
                     ElevatedButton.icon(
                       onPressed: _isProcessing ? null : _takePictureAndAnalyze,
                       style: ElevatedButton.styleFrom(
@@ -828,7 +794,6 @@ Future<void> _fetchPatientMedications() async {
                   ],
                 ),
               ),
-            // 從相簿選擇按鈕
             Padding(
               padding: EdgeInsets.only(top: 20),
               child: ElevatedButton.icon(
@@ -886,6 +851,7 @@ Future<void> _compareMedications(List<Map<String, dynamic>> detections) async {
     });
   }
 }
+
 class JsonResultScreen extends StatelessWidget {
   final String? annotatedImageBase64;
   final String jsonResponse;
@@ -1451,3 +1417,341 @@ class FeatureButton extends StatelessWidget {
   }
 }
 
+
+
+class PrescriptionCaptureScreen extends StatefulWidget {
+  final List<CameraDescription> cameras;
+  final TextEditingController usernameController;
+  final TextEditingController passwordController;
+
+  const PrescriptionCaptureScreen({
+    required this.cameras,
+    required this.usernameController,
+    required this.passwordController,
+    Key? key,
+  }) : super(key: key);
+
+  @override
+  _PrescriptionCaptureScreenState createState() => _PrescriptionCaptureScreenState();
+}
+
+class _PrescriptionCaptureScreenState extends State<PrescriptionCaptureScreen> {
+  CameraController? _cameraController;
+  bool _isCameraInitialized = false;
+  bool _isLoading = true;
+  String? _errorMessage;
+  File? _selectedImage;
+  bool _isProcessing = false;
+  Offset? _focusPoint;
+  bool _isFocusing = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _initializeCamera();
+  }
+
+  Future<void> _initializeCamera() async {
+    if (widget.cameras.isEmpty) {
+      setState(() {
+        _errorMessage = '找不到可用相機';
+        _isLoading = false;
+      });
+      return;
+    }
+
+    try {
+      _cameraController = CameraController(
+        widget.cameras[0],
+        ResolutionPreset.medium,
+        enableAudio: false,
+      );
+
+      await _cameraController!.initialize();
+      await _cameraController!.setFocusMode(FocusMode.auto);
+      await _cameraController!.setFlashMode(FlashMode.off);
+      if (!mounted) return;
+
+      setState(() {
+        _isCameraInitialized = true;
+        _isLoading = false;
+      });
+    } catch (e) {
+      setState(() {
+        _errorMessage = '相機初始化失敗: $e';
+        _isLoading = false;
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _cameraController?.dispose();
+    super.dispose();
+  }
+
+  Future<void> _setFocusPoint(Offset point, Size screenSize) async {
+    if (_cameraController == null || !_cameraController!.value.isInitialized) {
+      return;
+    }
+
+    setState(() {
+      _focusPoint = point;
+      _isFocusing = true;
+    });
+
+    try {
+      final double x = point.dx / screenSize.width;
+      final double y = point.dy / screenSize.height;
+
+      await _cameraController!.setFocusPoint(Offset(x, y));
+      await _cameraController!.setExposurePoint(Offset(x, y));
+      await Future.delayed(Duration(milliseconds: 500));
+
+      setState(() {
+        _isFocusing = false;
+      });
+    } catch (e) {
+      debugPrint('設置對焦點失敗: $e');
+      setState(() {
+        _isFocusing = false;
+      });
+    }
+  }
+
+  Future<void> _takePicture() async {
+    if (_cameraController == null || !_cameraController!.value.isInitialized) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('相機未初始化')),
+      );
+      return;
+    }
+
+    setState(() {
+      _isProcessing = true;
+    });
+
+    try {
+      await _cameraController!.setFocusMode(FocusMode.auto);
+      await _cameraController!.setFlashMode(FlashMode.off);
+
+      if (_focusPoint != null) {
+        final screenSize = MediaQuery.of(context).size;
+        await _setFocusPoint(_focusPoint!, screenSize);
+      }
+
+      await Future.delayed(Duration(milliseconds: 500));
+
+      final XFile picture = await _cameraController!.takePicture();
+      final bytes = await picture.readAsBytes();
+      final base64Image = base64Encode(bytes);
+
+      setState(() {
+        _selectedImage = File(picture.path);
+      });
+
+      // 傳送 JSON 請求
+      final response = await http.post(
+        Uri.parse('https://project.1114580.xyz/data'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'username': widget.usernameController.text,
+          'password': widget.passwordController.text,
+          'requestType': 'ppocr',
+          'data': {'image': 'data:image/jpeg;base64,$base64Image'}
+        }),
+      );
+
+      if (response.statusCode == 200) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('照片上傳成功')),
+        );
+        debugPrint('PPOCR response: ${response.body}');
+      } else {
+        throw Exception('上傳失敗: ${response.statusCode}');
+      }
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('處理失敗: $e')),
+      );
+    } finally {
+      setState(() {
+        _isProcessing = false;
+        _focusPoint = null;
+      });
+    }
+  }
+
+  Future<void> _pickImageFromGallery() async {
+    final ImagePicker picker = ImagePicker();
+    final XFile? image = await picker.pickImage(source: ImageSource.gallery);
+
+    if (image != null) {
+      final imageFile = File(image.path);
+      if (await imageFile.exists()) {
+        setState(() {
+          _selectedImage = imageFile;
+        });
+
+        try {
+          final bytes = await imageFile.readAsBytes();
+          final base64Image = base64Encode(bytes);
+
+          // 傳送 JSON 請求
+          final response = await http.post(
+            Uri.parse('https://project.1114580.xyz/data'),
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode({
+              'username': widget.usernameController.text,
+              'password': widget.passwordController.text,
+              'requestType': 'ppocr',
+              'data': {'image': 'data:image/jpeg;base64,$base64Image'}
+            }),
+          );
+
+          if (response.statusCode == 200) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text('照片上傳成功')),
+            );
+            debugPrint('PPOCR response: ${response.body}');
+          } else {
+            throw Exception('上傳失敗: ${response.statusCode}');
+          }
+        } catch (e) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('處理失敗: $e')),
+          );
+        }
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('照片檔案不存在')),
+        );
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: Text('藥單拍照'),
+        backgroundColor: Colors.grey[300],
+      ),
+      body: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: Column(
+          children: [
+            if (_isLoading)
+              Expanded(
+                child: Center(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      CircularProgressIndicator(),
+                      SizedBox(height: 20),
+                      Text('正在初始化相機...', style: TextStyle(fontSize: 16)),
+                    ],
+                  ),
+                ),
+              )
+            else if (_errorMessage != null)
+              Expanded(
+                child: Center(
+                  child: Text(
+                    _errorMessage!,
+                    style: TextStyle(color: Colors.red, fontSize: 18),
+                    textAlign: TextAlign.center,
+                  ),
+                ),
+              )
+            else if (_isCameraInitialized)
+              Expanded(
+                child: Column(
+                  children: [
+                    Expanded(
+                      flex: 8,
+                      child: Stack(
+                        children: [
+                          ClipRRect(
+                            borderRadius: BorderRadius.circular(12),
+                            child: CameraPreview(_cameraController!),
+                          ),
+                          GestureDetector(
+                            onTapDown: (details) {
+                              final screenSize = MediaQuery.of(context).size;
+                              _setFocusPoint(details.localPosition, screenSize);
+                            },
+                            child: Container(
+                              color: Colors.transparent,
+                              child: Center(
+                                child: _focusPoint != null
+                                    ? Container(
+                                        width: 100,
+                                        height: 100,
+                                        decoration: BoxDecoration(
+                                          border: Border.all(
+                                            color: _isFocusing ? Colors.yellow : Colors.white,
+                                            width: 2,
+                                          ),
+                                          borderRadius: BorderRadius.circular(8),
+                                        ),
+                                      )
+                                    : null,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    SizedBox(height: 20),
+                    ElevatedButton.icon(
+                      onPressed: _isProcessing ? null : _takePicture,
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.green[400],
+                        minimumSize: Size(double.infinity, 50),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                      ),
+                      icon: Icon(Icons.camera_alt, color: Colors.white),
+                      label: Text(
+                        _isProcessing ? '處理中...' : '拍照',
+                        style: TextStyle(fontSize: 18, color: Colors.white),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            Padding(
+              padding: EdgeInsets.only(top: 20),
+              child: ElevatedButton.icon(
+                onPressed: _isProcessing ? null : _pickImageFromGallery,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.blue[400],
+                  minimumSize: Size(double.infinity, 50),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                ),
+                icon: Icon(Icons.photo_library, color: Colors.white),
+                label: Text(
+                  '從相簿選擇照片',
+                  style: TextStyle(fontSize: 18, color: Colors.white),
+                ),
+              ),
+            ),
+            if (_selectedImage != null)
+              Padding(
+                padding: const EdgeInsets.only(top: 20),
+                child: Image.file(
+                  _selectedImage!,
+                  height: 100,
+                  fit: BoxFit.cover,
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
