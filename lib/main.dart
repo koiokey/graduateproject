@@ -927,7 +927,8 @@ class JsonResultScreen extends StatelessWidget {
   }
 
   Widget _buildComparisonResult() {
-    return Column(
+  return SingleChildScrollView(
+    child: Column(
       children: [
         // 患者應服用的藥物列表
         Padding(
@@ -1002,8 +1003,9 @@ class JsonResultScreen extends StatelessWidget {
           ),
         ],
       ],
-    );
-  }
+    ),
+  );
+}
 
   Widget _buildRawJsonViewer() {
     try {
