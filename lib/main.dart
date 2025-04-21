@@ -1940,13 +1940,23 @@ class PrescriptionResultScreen extends StatefulWidget {
 class _PrescriptionResultScreenState extends State<PrescriptionResultScreen> {
   final TextEditingController _patientNameController = TextEditingController();
   final TextEditingController _medicationController = TextEditingController();
-  final TextEditingController _usageController = TextEditingController();
   final TextEditingController _dosageController = TextEditingController();
   final TextEditingController _appearanceController = TextEditingController();
   final TextEditingController _daysController = TextEditingController();
+  String? _selectedUsage;
   String? _errorMessage;
   bool _isSaving = false;
   ScaffoldMessengerState? _scaffoldMessenger;
+
+  final List<String> _usageOptions = [
+    '早餐後',
+    '中餐後',
+    '晚餐後',
+    '早餐後,中餐後',
+    '早餐後,晚餐後',
+    '中餐後,晚餐後',
+    '早餐後,中餐後,晚餐後',
+  ];
 
   @override
   void initState() {
@@ -1997,29 +2007,51 @@ class _PrescriptionResultScreenState extends State<PrescriptionResultScreen> {
 
       String usageText = '';
       final usage = jsonData['usage'];
+      print('Raw usage from JSON: $usage');
       if (usage is List<dynamic>) {
-        usageText = usage.map((e) => e?.toString() ?? '').join(', ');
+        usageText = usage.map((e) => e?.toString() ?? '').join(',');
       } else if (usage is Map<dynamic, dynamic>) {
-        usageText = usage.values.map((e) => e?.toString() ?? '').join(', ');
+        usageText = usage.values.map((e) => e?.toString() ?? '').join(',');
       } else if (usage is String) {
         usageText = usage;
       } else if (usage != null) {
         usageText = usage.toString();
       }
 
+      final usageParts = usageText.split(',').map((e) => e.trim()).where((e) => e.isNotEmpty).toList();
+      final validTimes = ['早餐後', '中餐後', '晚餐後'];
+      final filteredParts = usageParts.where((part) => validTimes.contains(part)).toList();
+      usageText = filteredParts.join(',');
+      print('Filtered usage text: $usageText');
+
+      String? matchedOption;
+      if (_usageOptions.contains(usageText)) {
+        matchedOption = usageText;
+      } else {
+        final sortedParts = filteredParts..sort();
+        final sortedText = sortedParts.join(',');
+        if (_usageOptions.contains(sortedText)) {
+          matchedOption = sortedText;
+        }
+      }
+
       if (mounted) {
         setState(() {
           _medicationController.text = jsonData['medication']?.toString() ?? '';
-          _usageController.text = usageText;
+          _selectedUsage = matchedOption ?? _usageOptions[0];
           _dosageController.text = jsonData['dosage']?.toString() ?? '';
           _appearanceController.text = jsonData['appearance']?.toString() ?? '';
           _daysController.text = jsonData['days']?.toString() ?? '';
-          _errorMessage = null;
+          _errorMessage = matchedOption == null && usageText.isNotEmpty
+              ? 'JSON 用藥時間無效，已設置為默認值'
+              : null;
         });
+        print('Selected usage after parsing: $_selectedUsage');
       }
     } catch (e) {
       if (mounted) {
         setState(() {
+          _selectedUsage = _usageOptions[0];
           _errorMessage = 'JSON 解析錯誤: $e';
         });
       }
@@ -2272,7 +2304,7 @@ class _PrescriptionResultScreenState extends State<PrescriptionResultScreen> {
 
     if (appState.currentPatientName == null ||
         _medicationController.text.isEmpty ||
-        _usageController.text.isEmpty ||
+        _selectedUsage == null ||
         _dosageController.text.isEmpty ||
         _daysController.text.isEmpty) {
       if (mounted && _scaffoldMessenger != null) {
@@ -2317,22 +2349,19 @@ class _PrescriptionResultScreenState extends State<PrescriptionResultScreen> {
         }
       }
 
-      // 解析用藥時間
-      final usageText = _usageController.text;
-      final usageTimes = <String>[];
-      final validTimes = ['早餐後', '中餐後', '晚餐後'];
-      final parts = usageText.split(',').map((e) => e.trim()).toList();
-      for (var part in parts) {
-        if (validTimes.contains(part)) {
-          usageTimes.add(part);
-        }
-      }
-
+      final usageTimes = _selectedUsage!.split(',').map((e) => e.trim()).toList();
+      print('Selected usage: $_selectedUsage');
+      print('Parsed usage times: $usageTimes');
       if (usageTimes.isEmpty) {
-        throw Exception('用藥時間無效，必須包含「早餐後」、「中餐後」或「晚餐後」');
+        throw Exception('用藥時間無效');
       }
 
-      // 為每個用藥時間生成 SQL 並發送 HTTP 請求
+      final validTimes = ['早餐後', '中餐後', '晚餐後'];
+      final invalidTimes = usageTimes.where((time) => !validTimes.contains(time)).toList();
+      if (invalidTimes.isNotEmpty) {
+        throw Exception('無效的用藥時間: ${invalidTimes.join(', ')}');
+      }
+
       final requests = usageTimes.map((timing) async {
         final sanitizedTiming = _sanitizeInput(timing);
         final sql = """
@@ -2358,7 +2387,6 @@ class _PrescriptionResultScreenState extends State<PrescriptionResultScreen> {
         );
       }).toList();
 
-      // 並行執行所有請求
       final responses = await Future.wait(requests);
       final errors = <String>[];
 
@@ -2370,6 +2398,7 @@ class _PrescriptionResultScreenState extends State<PrescriptionResultScreen> {
             final errorData = jsonDecode(response.body);
             errorMsg = errorData['error']?.toString() ?? errorMsg;
           } catch (_) {}
+          print('Error response for ${usageTimes[i]}: ${response.body}');
           errors.add(errorMsg);
         }
       }
@@ -2402,11 +2431,11 @@ class _PrescriptionResultScreenState extends State<PrescriptionResultScreen> {
   void _resetForm() {
     if (!mounted) return;
     _medicationController.clear();
-    _usageController.clear();
     _dosageController.clear();
     _appearanceController.clear();
     _daysController.clear();
     setState(() {
+      _selectedUsage = _usageOptions[0];
       _errorMessage = null;
     });
   }
@@ -2415,11 +2444,9 @@ class _PrescriptionResultScreenState extends State<PrescriptionResultScreen> {
   void dispose() {
     _patientNameController.dispose();
     _medicationController.dispose();
-    _usageController.dispose();
     _dosageController.dispose();
     _appearanceController.dispose();
     _daysController.dispose();
-    _scaffoldMessenger = null;
     super.dispose();
   }
 
@@ -2465,14 +2492,27 @@ class _PrescriptionResultScreenState extends State<PrescriptionResultScreen> {
                 ),
               ),
               const SizedBox(height: 16),
-              TextField(
-                controller: _usageController,
+              DropdownButtonFormField<String>(
+                value: _selectedUsage,
                 decoration: const InputDecoration(
                   labelText: '用藥時間',
                   border: OutlineInputBorder(),
                   filled: true,
                   fillColor: Colors.white,
                 ),
+                items: _usageOptions.map((String option) {
+                  return DropdownMenuItem<String>(
+                    value: option,
+                    child: Text(option),
+                  );
+                }).toList(),
+                onChanged: (String? newValue) {
+                  if (newValue != null) {
+                    setState(() {
+                      _selectedUsage = newValue;
+                    });
+                  }
+                },
               ),
               const SizedBox(height: 16),
               TextField(
