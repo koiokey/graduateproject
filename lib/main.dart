@@ -48,7 +48,10 @@ class MyApp extends StatelessWidget {
               usernameController: usernameController,
               passwordController: passwordController,
             ),
-        '/patient_self_management': (context) => PatientSelfManagementScreen(),
+        '/patient_self_management': (context) => PatientSelfManagementScreen(
+              usernameController: usernameController,
+              passwordController: passwordController,
+            ),
       },
       onUnknownRoute: (settings) => MaterialPageRoute(
         builder: (context) => Scaffold(
@@ -338,20 +341,7 @@ class _HomeScreenState extends State<HomeScreen> {
               FeatureButton(
                 title: '患者本身管理',
                 onPressed: () {
-                  if (selectedPatient != null) {
-                    Navigator.pushNamed(
-                      context,
-                      '/patient_self_management',
-                      arguments: {
-                        'patientName': selectedPatient,
-                        'patientId': selectedPatientId,
-                      },
-                    );
-                  } else {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(content: Text('請先選擇病患')),
-                    );
-                  }
+                  Navigator.pushNamed(context, '/patient_self_management');
                 },
               ),
             ],
@@ -398,12 +388,24 @@ class _HomeScreenState extends State<HomeScreen> {
             ListTile(
               title: Text('藥物辨識檢測'),
               onTap: () {
+                if (selectedPatient == null) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text('請先選擇病患')),
+                  );
+                  return;
+                }
                 Navigator.pushNamed(context, '/medicine_recognition');
               },
             ),
             ListTile(
               title: Text('藥單自動鍵值'),
               onTap: () {
+                if (selectedPatient == null) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text('請先選擇病患')),
+                  );
+                  return;
+                }
                 Navigator.pushNamed(context, '/prescription_capture');
               },
             ),
@@ -429,20 +431,7 @@ class _HomeScreenState extends State<HomeScreen> {
             ListTile(
               title: Text('患者本身管理'),
               onTap: () {
-                if (selectedPatient != null) {
-                  Navigator.pushNamed(
-                    context,
-                    '/patient_self_management',
-                    arguments: {
-                      'patientName': selectedPatient,
-                      'patientId': selectedPatientId,
-                    },
-                  );
-                } else {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(content: Text('請先選擇病患')),
-                  );
-                }
+                Navigator.pushNamed(context, '/patient_self_management');
               },
             ),
           ],
@@ -479,39 +468,307 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 }
 
-class PatientSelfManagementScreen extends StatelessWidget {
+
+//本身
+class PatientSelfManagementScreen extends StatefulWidget {
+  final TextEditingController usernameController;
+  final TextEditingController passwordController;
+
+  PatientSelfManagementScreen({
+    required this.usernameController,
+    required this.passwordController,
+  });
+
+  @override
+  _PatientSelfManagementScreenState createState() => _PatientSelfManagementScreenState();
+}
+
+class _PatientSelfManagementScreenState extends State<PatientSelfManagementScreen> {
+  bool _isLoading = true;
+  List<Map<String, dynamic>> _patients = [];
+  String? _errorMessage;
+
+  @override
+  void initState() {
+    super.initState();
+    _fetchPatients();
+  }
+
+  Future<void> _fetchPatients() async {
+    if (appState.centerId == null) {
+      setState(() {
+        _errorMessage = '未找到中心 ID';
+        _isLoading = false;
+      });
+      return;
+    }
+
+    try {
+      final response = await http.post(
+        Uri.parse('https://project.1114580.xyz/data'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'username': widget.usernameController.text,
+          'password': widget.passwordController.text,
+          'requestType': 'sql search',
+          'data': {
+            'sql': '''
+              SELECT PatientName, PatientPicture, PatientID
+              FROM patients
+              WHERE CenterID = '${appState.centerId}'
+            ''',
+          },
+        }),
+      );
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        debugPrint('API Response: $data'); // 記錄 API 回應以便除錯
+        if (data is List) {
+          setState(() {
+            _patients = data.map((item) => {
+              'PatientName': item['PatientName']?.toString() ?? '未知姓名',
+              'PatientPicture': item['PatientPicture']?.toString(),
+              'PatientID': item['PatientID']?.toString() ?? '未知ID',
+            }).toList();
+            _isLoading = false;
+          });
+        } else {
+          throw Exception('無效的資料格式');
+        }
+      } else {
+        throw Exception('伺服器錯誤: ${response.statusCode}');
+      }
+    } catch (e) {
+      setState(() {
+        _errorMessage = '獲取患者資料失敗: $e';
+        _isLoading = false;
+      });
+    }
+  }
+
+  Future<String?> _pickAndEncodeImage() async {
+    final ImagePicker picker = ImagePicker();
+    final XFile? image = await picker.pickImage(source: ImageSource.gallery);
+    if (image == null) return null;
+
+    try {
+      final imageBytes = await image.readAsBytes();
+      return base64Encode(imageBytes);
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('圖片處理失敗: $e')),
+      );
+      return null;
+    }
+  }
+
+  Future<void> _updatePatient(String patientId, String newName, String? newBase64Image) async {
+    setState(() => _isLoading = true);
+    try {
+      // 構建 SQL 更新語句，根據是否有新圖片動態生成
+      final updates = <String>[];
+      if (newName.isNotEmpty) {
+        updates.add("PatientName = '$newName'");
+      }
+      if (newBase64Image != null) {
+        updates.add("PatientPicture = '$newBase64Image'");
+      }
+      if (updates.isEmpty) {
+        setState(() => _isLoading = false);
+        return; // 無變更
+      }
+
+      final sql = '''
+        UPDATE patients
+        SET ${updates.join(', ')}
+        WHERE PatientID = '$patientId'
+      ''';
+
+      final response = await http.post(
+        Uri.parse('https://project.1114580.xyz/data'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'username': widget.usernameController.text,
+          'password': widget.passwordController.text,
+          'requestType': 'sql update',
+          'data': {'sql': sql},
+        }),
+      );
+
+      if (response.statusCode == 200) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('更新成功')),
+        );
+        await _fetchPatients(); // 刷新患者清單
+      } else {
+        throw Exception('更新失敗: ${response.statusCode}');
+      }
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('更新失敗: $e')),
+      );
+    } finally {
+      setState(() => _isLoading = false);
+    }
+  }
+
+  bool _isValidBase64(String? base64Str) {
+    if (base64Str == null || base64Str.isEmpty) return false;
+    final cleanStr = base64Str.replaceAll(RegExp(r'^data:image/[^;]+;base64,'), '');
+    if (cleanStr.length % 4 != 0) return false;
+    final base64Pattern = RegExp(r'^[A-Za-z0-9+/=]+$');
+    return base64Pattern.hasMatch(cleanStr);
+  }
+
+  void _showEditDialog(Map<String, dynamic> patient) {
+    final patientName = patient['PatientName'] as String;
+    final patientId = patient['PatientID'] as String;
+    String newName = patientName;
+    String? newBase64Image;
+
+    showDialog(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: Text('編輯患者資料'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextFormField(
+                initialValue: patientName,
+                decoration: InputDecoration(
+                  labelText: '患者姓名',
+                  border: OutlineInputBorder(),
+                ),
+                onChanged: (value) => setDialogState(() => newName = value),
+              ),
+              SizedBox(height: 16),
+              ElevatedButton(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.green[200],
+                  padding: EdgeInsets.symmetric(vertical: 12, horizontal: 16),
+                ),
+                onPressed: () async {
+                  final base64Image = await _pickAndEncodeImage();
+                  if (base64Image != null) {
+                    setDialogState(() => newBase64Image = base64Image);
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(content: Text('圖片已選擇')),
+                    );
+                  }
+                },
+                child: Text(
+                  newBase64Image == null ? '上傳圖片' : '圖片已選擇',
+                  style: TextStyle(fontSize: 16),
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: Text('離開'),
+            ),
+            TextButton(
+              onPressed: () async {
+                Navigator.pop(context); // 先關閉對話框
+                await _updatePatient(patientId, newName, newBase64Image);
+              },
+              child: Text('確認更改'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildPatientButton(Map<String, dynamic> patient) {
+    final patientName = patient['PatientName'] as String;
+    final patientPicture = patient['PatientPicture'] as String?;
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4.0, horizontal: 8.0),
+      child: ElevatedButton(
+        style: ElevatedButton.styleFrom(
+          padding: EdgeInsets.all(16),
+          backgroundColor: Colors.green[100],
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(8),
+          ),
+          minimumSize: Size(double.infinity, 80),
+        ),
+        onPressed: () => _showEditDialog(patient),
+        child: Row(
+          children: [
+            _isValidBase64(patientPicture)
+                ? ClipRRect(
+                    borderRadius: BorderRadius.circular(8),
+                    child: Image.memory(
+                      base64Decode(patientPicture!),
+                      width: 60,
+                      height: 60,
+                      fit: BoxFit.cover,
+                      errorBuilder: (context, error, stackTrace) => Icon(
+                        Icons.broken_image,
+                        size: 60,
+                        color: Colors.grey,
+                      ),
+                    ),
+                  )
+                : Icon(
+                    Icons.person,
+                    size: 60,
+                    color: Colors.grey,
+                  ),
+            SizedBox(width: 16),
+            Expanded(
+              child: Text(
+                patientName,
+                style: TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.black87,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
-    final arguments = ModalRoute.of(context)?.settings.arguments as Map<String, dynamic>?;
-    final patientName = arguments?['patientName'] as String? ?? '未選擇患者';
-    final patientId = arguments?['patientId'] as String? ?? '未知ID';
-
     return Scaffold(
       appBar: AppBar(
         title: Text('患者本身管理'),
         backgroundColor: Colors.grey[300],
       ),
-      body: Padding(
-        padding: const EdgeInsets.all(16.0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              '患者姓名: $patientName',
-              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-            ),
-            Text(
-              '患者ID: $patientId',
-              style: TextStyle(fontSize: 16, color: Colors.grey),
-            ),
-            SizedBox(height: 20),
-            Text(
-              '這裡是患者本身管理的功能頁面（待實現）',
-              style: TextStyle(fontSize: 16),
-            ),
-          ],
-        ),
-      ),
+      body: _isLoading
+          ? Center(child: CircularProgressIndicator())
+          : _errorMessage != null
+              ? Center(
+                  child: Text(
+                    _errorMessage!,
+                    style: TextStyle(color: Colors.red, fontSize: 18),
+                    textAlign: TextAlign.center,
+                  ),
+                )
+              : _patients.isEmpty
+                  ? Center(
+                      child: Text(
+                        '無患者資料',
+                        style: TextStyle(fontSize: 18, color: Colors.grey),
+                      ),
+                    )
+                  : ListView.builder(
+                      padding: EdgeInsets.all(8),
+                      itemCount: _patients.length,
+                      itemBuilder: (context, index) {
+                        return _buildPatientButton(_patients[index]);
+                      },
+                    ),
     );
   }
 }
