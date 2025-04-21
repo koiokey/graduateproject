@@ -1951,10 +1951,9 @@ class _PrescriptionResultScreenState extends State<PrescriptionResultScreen> {
   @override
   void initState() {
     super.initState();
-    _syncAuthData(); // 同步認證數據
+    _syncAuthData();
     _parseJsonResponse();
     _patientNameController.text = appState.currentPatientName ?? '未選擇患者';
-    // 檢查登錄狀態
     _checkLoginStatus();
   }
 
@@ -2224,7 +2223,7 @@ class _PrescriptionResultScreenState extends State<PrescriptionResultScreen> {
                       _isSaving = true;
                     });
                     try {
-                      _syncAuthData(); // 確保認證數據有效
+                      _syncAuthData();
                       if (appState.usernameController.text.isEmpty ||
                           appState.passwordController.text.isEmpty) {
                         throw Exception('認證數據無效，請重新登錄');
@@ -2297,7 +2296,6 @@ class _PrescriptionResultScreenState extends State<PrescriptionResultScreen> {
 
       final patientName = _sanitizeInput(appState.currentPatientName!);
       final medication = _sanitizeInput(_medicationController.text);
-      final timing = _sanitizeInput(_usageController.text);
       final dose = _sanitizeInput(_dosageController.text);
       final days = _sanitizeInput(_daysController.text);
 
@@ -2319,42 +2317,72 @@ class _PrescriptionResultScreenState extends State<PrescriptionResultScreen> {
         }
       }
 
-      final sql = """
-        INSERT INTO medications (PatientID, DrugID, Timing, Dose, days)
-        VALUES (
-            (SELECT PatientID FROM patients WHERE PatientName = '$patientName'),
-            (SELECT DrugID FROM drugs WHERE DrugName = '$medication'),
-            '$timing',
-            '$dose',
-            '$days'
-        );
-      """;
-
-      final response = await http.post(
-        Uri.parse('https://project.1114580.xyz/data'),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({
-          'username': username,
-          'password': password,
-          'requestType': 'sql update',
-          'data': {'sql': sql}
-        }),
-      );
-
-      if (response.statusCode == 200) {
-        if (mounted && _scaffoldMessenger != null) {
-          _scaffoldMessenger!.showSnackBar(
-            SnackBar(content: Text('資料保存成功')),
-          );
-          _resetForm();
+      // 解析用藥時間
+      final usageText = _usageController.text;
+      final usageTimes = <String>[];
+      final validTimes = ['早餐後', '中餐後', '晚餐後'];
+      final parts = usageText.split(',').map((e) => e.trim()).toList();
+      for (var part in parts) {
+        if (validTimes.contains(part)) {
+          usageTimes.add(part);
         }
-      } else {
-        String errorMsg = '保存失敗: HTTP ${response.statusCode}';
-        try {
-          final errorData = jsonDecode(response.body);
-          errorMsg = errorData['error']?.toString() ?? errorMsg;
-        } catch (_) {}
-        throw Exception(errorMsg);
+      }
+
+      if (usageTimes.isEmpty) {
+        throw Exception('用藥時間無效，必須包含「早餐後」、「中餐後」或「晚餐後」');
+      }
+
+      // 為每個用藥時間生成 SQL 並發送 HTTP 請求
+      final requests = usageTimes.map((timing) async {
+        final sanitizedTiming = _sanitizeInput(timing);
+        final sql = """
+          INSERT INTO medications (PatientID, DrugID, Timing, Dose, days)
+          VALUES (
+              (SELECT PatientID FROM patients WHERE PatientName = '$patientName'),
+              (SELECT DrugID FROM drugs WHERE DrugName = '$medication'),
+              '$sanitizedTiming',
+              '$dose',
+              '$days'
+          );
+        """;
+
+        return http.post(
+          Uri.parse('https://project.1114580.xyz/data'),
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode({
+            'username': username,
+            'password': password,
+            'requestType': 'sql update',
+            'data': {'sql': sql}
+          }),
+        );
+      }).toList();
+
+      // 並行執行所有請求
+      final responses = await Future.wait(requests);
+      final errors = <String>[];
+
+      for (var i = 0; i < responses.length; i++) {
+        final response = responses[i];
+        if (response.statusCode != 200) {
+          String errorMsg = '保存失敗（${usageTimes[i]}）: HTTP ${response.statusCode}';
+          try {
+            final errorData = jsonDecode(response.body);
+            errorMsg = errorData['error']?.toString() ?? errorMsg;
+          } catch (_) {}
+          errors.add(errorMsg);
+        }
+      }
+
+      if (errors.isNotEmpty) {
+        throw Exception('部分上傳失敗: ${errors.join('; ')}');
+      }
+
+      if (mounted && _scaffoldMessenger != null) {
+        _scaffoldMessenger!.showSnackBar(
+          SnackBar(content: Text('資料保存成功')),
+        );
+        _resetForm();
       }
     } catch (e) {
       if (mounted && _scaffoldMessenger != null) {
