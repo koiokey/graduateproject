@@ -88,7 +88,7 @@ class _LoginScreenState extends State<LoginScreen> {
       "password": widget.passwordController.text,
       "requestType": "sql search",
       "data": {
-        "sql": "SELECT CenterID, CenterAccount, CenterPassword FROM Accounts"
+        "sql": "SELECT CenterID, CenterAccount, CenterPassword FROM accounts"
       }
     };
 
@@ -122,7 +122,7 @@ class _LoginScreenState extends State<LoginScreen> {
             "password": widget.passwordController.text,
             "requestType": "sql search",
             "data": {
-              "sql": "SELECT PatientID, PatientName FROM Patients WHERE CenterID = '$matchedCenterId'"
+              "sql": "SELECT PatientID, PatientName FROM patients WHERE CenterID = '$matchedCenterId'"
             }
           };
 
@@ -659,48 +659,53 @@ class _MedicineRecognitionScreenState extends State<MedicineRecognitionScreen> {
     }
   }
 Future<void> _fetchPatientMedications() async {
-    if (appState.currentPatientId == null) return;
+  if (appState.currentPatientId == null) return;
 
-    try {
-      final response = await http.post(
-        Uri.parse('https://project.1114580.xyz/data'),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({
-          "username": widget.usernameController.text,
-          "password": widget.passwordController.text,
-          "requestType": "sql search",
-          "data": {
-            "sql": """
-              SELECT d.DrugName, m.Dose
-              FROM medications m
-              INNER JOIN drugs d ON m.DrugID = d.DrugID
-              INNER JOIN (
-                  SELECT DrugID, MAX(Added_Day) AS Latest_Added_Day
-                  FROM medications
-                  WHERE PatientID = '${appState.currentPatientId}'
-                  GROUP BY DrugID
-              ) latest ON m.DrugID = latest.DrugID AND m.Added_Day = latest.Latest_Added_Day
-              WHERE m.PatientID = '${appState.currentPatientId}'
-            """
-          }
-        }),
-      );
+  try {
+    // 獲取當前日期，格式為 YYYY-MM-DD
+    final currentDate = DateTime.now();
+    final formattedCurrentDate = "${currentDate.year}-${currentDate.month.toString().padLeft(2, '0')}-${currentDate.day.toString().padLeft(2, '0')}";
 
-      final responseData = jsonDecode(response.body);
-      if (responseData is List) {
-        setState(() {
-          _patientMedications = responseData
-              .map((item) => {
-                    'drugName': item['DrugName']?.toString().toLowerCase() ?? '',
-                    'dose': int.tryParse(item['Dose']?.toString() ?? '0') ?? 0,
-                  })
-              .toList();
-        });
-      }
-    } catch (e) {
-      debugPrint('獲取患者藥物失敗: $e');
+    final response = await http.post(
+      Uri.parse('https://project.1114580.xyz/data'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({
+        "username": widget.usernameController.text,
+        "password": widget.passwordController.text,
+        "requestType": "sql search",
+        "data": {
+          "sql": """
+            SELECT d.DrugName, m.Dose
+            FROM medications m
+            INNER JOIN drugs d ON m.DrugID = d.DrugID
+            INNER JOIN (
+                SELECT DrugID, MAX(Added_Day) AS Latest_Added_Day
+                FROM medications
+                WHERE PatientID = '${appState.currentPatientId}'
+                GROUP BY DrugID
+            ) latest ON m.DrugID = latest.DrugID AND m.Added_Day = latest.Latest_Added_Day
+            WHERE m.PatientID = '${appState.currentPatientId}'
+            AND DATE_ADD(m.Added_Day, INTERVAL m.days DAY) >= '$formattedCurrentDate'
+          """
+        }
+      }),
+    );
+
+    final responseData = jsonDecode(response.body);
+    if (responseData is List) {
+      setState(() {
+        _patientMedications = responseData
+            .map((item) => {
+                  'drugName': item['DrugName']?.toString().toLowerCase() ?? '',
+                  'dose': int.tryParse(item['Dose']?.toString() ?? '0') ?? 0,
+                })
+            .toList();
+      });
     }
+  } catch (e) {
+    debugPrint('獲取患者藥物失敗: $e');
   }
+}
 
   
 @override
@@ -1089,11 +1094,11 @@ class _PatientManagementScreenState extends State<PatientManagementScreen> {
         "data": {
           "sql": """
             SELECT m.PatientID, m.Added_Day, d.DrugName, m.Timing, m.Dose, m.DrugID
-            FROM Medications m
+            FROM medications m
             INNER JOIN drugs d ON m.DrugID = d.DrugID
             INNER JOIN (
                 SELECT DrugID, MAX(Added_Day) AS Latest_Added_Day
-                FROM Medications
+                FROM medications
                 WHERE PatientID = '$selectedPatientId'
                 GROUP BY DrugID
             ) latest ON m.DrugID = latest.DrugID AND m.Added_Day = latest.Latest_Added_Day
@@ -2013,7 +2018,7 @@ class _PrescriptionResultScreenState extends State<PrescriptionResultScreen> {
           'password': widget.passwordController.text,
           'requestType': 'sql search',
           'data': {
-            'sql': "SELECT PatientID FROM Patients WHERE PatientName = '$patientName'"
+            'sql': "SELECT PatientID FROM patients WHERE PatientName = '$patientName'"
           },
         }),
       );
@@ -2026,7 +2031,7 @@ class _PrescriptionResultScreenState extends State<PrescriptionResultScreen> {
           'password': widget.passwordController.text,
           'requestType': 'sql search',
           'data': {
-            'sql': "SELECT DrugID FROM Drugs WHERE DrugName = '$drugName'"
+            'sql': "SELECT DrugID FROM drugs WHERE DrugName = '$drugName'"
           },
         }),
       );
@@ -2101,8 +2106,8 @@ class _PrescriptionResultScreenState extends State<PrescriptionResultScreen> {
       final sql = """
         INSERT INTO Medications (PatientID, DrugID, Timing, Dose, days)
         VALUES (
-            (SELECT PatientID FROM Patients WHERE PatientName = '$patientName'),
-            (SELECT DrugID FROM Drugs WHERE DrugName = '$medication'),
+            (SELECT PatientID FROM patients WHERE PatientName = '$patientName'),
+            (SELECT DrugID FROM drugs WHERE DrugName = '$medication'),
             '$timing',
             '$dose',
             '$days'
