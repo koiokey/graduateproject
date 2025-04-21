@@ -53,7 +53,7 @@ class MyApp extends StatelessWidget {
   }
 }
 
-
+//登入
 class LoginScreen extends StatefulWidget {
   final TextEditingController usernameController;
   final TextEditingController passwordController;
@@ -218,7 +218,7 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 }
 
-
+//首頁
 class HomeScreen extends StatefulWidget {
   final List<CameraDescription> cameras;
   final TextEditingController usernameController;
@@ -382,7 +382,7 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 }
-
+//藥丸
 class MedicineRecognitionScreen extends StatefulWidget {
   final List<CameraDescription> cameras;
   final TextEditingController usernameController;
@@ -675,17 +675,22 @@ Future<void> _fetchPatientMedications() async {
         "requestType": "sql search",
         "data": {
           "sql": """
-            SELECT d.DrugName, m.Dose
-            FROM medications m
-            INNER JOIN drugs d ON m.DrugID = d.DrugID
-            INNER JOIN (
-                SELECT DrugID, MAX(Added_Day) AS Latest_Added_Day
+           SELECT d.DrugName, m.Dose
+          FROM (
+                SELECT *
                 FROM medications
                 WHERE PatientID = '${appState.currentPatientId}'
-                GROUP BY DrugID
-            ) latest ON m.DrugID = latest.DrugID AND m.Added_Day = latest.Latest_Added_Day
-            WHERE m.PatientID = '${appState.currentPatientId}'
-            AND DATE_ADD(m.Added_Day, INTERVAL m.days DAY) >= '$formattedCurrentDate'
+                  AND DATE_ADD(Added_Day, INTERVAL days DAY) >= '$formattedCurrentDate'
+                ) m
+                JOIN drugs d ON m.DrugID = d.DrugID
+                JOIN (
+                    SELECT DrugID, MAX(Added_Day) AS Latest_Added_Day
+                    FROM medications
+                    WHERE PatientID = '${appState.currentPatientId}'
+                      AND DATE_ADD(Added_Day, INTERVAL days DAY) >= '$formattedCurrentDate'
+                    GROUP BY DrugID
+                ) latest
+                ON m.DrugID = latest.DrugID AND m.Added_Day = latest.Latest_Added_Day;
           """
         }
       }),
@@ -1047,7 +1052,7 @@ class JsonResultScreen extends StatelessWidget {
   }
 }
 
-
+//看患者吃的藥有哪些
 class PatientManagementScreen extends StatefulWidget {
   @override
   _PatientManagementScreenState createState() => _PatientManagementScreenState();
@@ -1426,7 +1431,7 @@ class FeatureButton extends StatelessWidget {
 }
 
 
-
+//OCR
 class PrescriptionCaptureScreen extends StatefulWidget {
   final List<CameraDescription> cameras;
   final TextEditingController usernameController;
@@ -1918,16 +1923,15 @@ class _PrescriptionCaptureScreenState extends State<PrescriptionCaptureScreen> {
 }
 
 class PrescriptionResultScreen extends StatefulWidget {
-  final String jsonResponse;
   final TextEditingController usernameController;
   final TextEditingController passwordController;
+  final String jsonResponse;
 
-  const PrescriptionResultScreen({
-    required this.jsonResponse,
+  PrescriptionResultScreen({
     required this.usernameController,
     required this.passwordController,
-    Key? key,
-  }) : super(key: key);
+    required this.jsonResponse,
+  });
 
   @override
   _PrescriptionResultScreenState createState() => _PrescriptionResultScreenState();
@@ -2010,6 +2014,9 @@ class _PrescriptionResultScreenState extends State<PrescriptionResultScreen> {
 
   Future<bool> _verifyPatientAndDrug(String patientName, String drugName) async {
     try {
+      final sanitizedPatientName = _sanitizeInput(patientName);
+      final sanitizedDrugName = _sanitizeInput(drugName);
+
       final patientCheck = await http.post(
         Uri.parse('https://project.1114580.xyz/data'),
         headers: {'Content-Type': 'application/json'},
@@ -2018,7 +2025,7 @@ class _PrescriptionResultScreenState extends State<PrescriptionResultScreen> {
           'password': widget.passwordController.text,
           'requestType': 'sql search',
           'data': {
-            'sql': "SELECT PatientID FROM patients WHERE PatientName = '$patientName'"
+            'sql': "SELECT PatientID FROM patients WHERE PatientName = '$sanitizedPatientName'"
           },
         }),
       );
@@ -2031,10 +2038,13 @@ class _PrescriptionResultScreenState extends State<PrescriptionResultScreen> {
           'password': widget.passwordController.text,
           'requestType': 'sql search',
           'data': {
-            'sql': "SELECT DrugID FROM drugs WHERE DrugName = '$drugName'"
+            'sql': "SELECT DrugID FROM drugs WHERE DrugName = '$sanitizedDrugName'"
           },
         }),
       );
+
+      debugPrint('Patient Check Response: ${patientCheck.body}');
+      debugPrint('Drug Check Response: ${drugCheck.body}');
 
       final patientData = jsonDecode(patientCheck.body);
       final drugData = jsonDecode(drugCheck.body);
@@ -2049,6 +2059,89 @@ class _PrescriptionResultScreenState extends State<PrescriptionResultScreen> {
       debugPrint('驗證患者和藥物失敗: $e');
       return false;
     }
+  }
+
+  Future<String?> _checkSimilarDrugName(String inputDrugName) async {
+    try {
+      final sanitizedDrugName = _sanitizeInput(inputDrugName);
+      final sql = """
+        SELECT DrugName
+        FROM drugs
+        WHERE levenshtein_enhanced(DrugName, '$sanitizedDrugName') <= 2
+        LIMIT 1
+      """;
+
+      debugPrint('查詢相似藥物 SQL: $sql');
+
+      final response = await http.post(
+        Uri.parse('https://project.1114580.xyz/data'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'username': widget.usernameController.text,
+          'password': widget.passwordController.text,
+          'requestType': 'sql search',
+          'data': {'sql': sql}
+        }),
+      );
+
+      debugPrint('查詢相似藥物 HTTP 狀態碼: ${response.statusCode}');
+      debugPrint('查詢相似藥物響應內容: ${response.body}');
+
+      if (response.statusCode != 200) {
+        throw Exception('查詢相似藥物失敗: HTTP ${response.statusCode}');
+      }
+
+      final responseData = jsonDecode(response.body);
+      if (responseData is List && responseData.isNotEmpty) {
+        return responseData[0]['DrugName']?.toString();
+      }
+      return null;
+    } catch (e) {
+      debugPrint('查詢相似藥物失敗: $e');
+      return null;
+    }
+  }
+
+  void _showSimilarDrugDialog(String inputDrugName, String similarDrugName) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('找到相似的藥物名稱'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('您輸入的藥物名稱：$inputDrugName'),
+            SizedBox(height: 8),
+            Text('資料庫中的相似名稱：$similarDrugName'),
+            SizedBox(height: 16),
+            Text(
+              '在資料庫裡有找到相似的名稱 請確認是否是下方的名稱',
+              style: TextStyle(fontWeight: FontWeight.bold),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () {
+              Navigator.of(context).pop(); // 關閉對話框
+            },
+            child: Text('並不是這個藥名'),
+          ),
+          ElevatedButton(
+            onPressed: () async {
+              Navigator.of(context).pop(); // 關閉對話框
+              // 更新 _medicationController 為相似藥物名稱
+              setState(() {
+                _medicationController.text = similarDrugName;
+              });
+              await _saveToServer(); // 執行上傳
+            },
+            child: Text('確認上傳'),
+          ),
+        ],
+      ),
+    );
   }
 
   Future<void> _saveToServer() async {
@@ -2100,11 +2193,19 @@ class _PrescriptionResultScreenState extends State<PrescriptionResultScreen> {
 
       final isValid = await _verifyPatientAndDrug(patientName, medication);
       if (!isValid) {
-        throw Exception('患者或藥物不存在，請檢查患者姓名或藥物名稱');
+        // 藥物驗證失敗，查詢相似藥物名稱
+        final similarDrug = await _checkSimilarDrugName(medication);
+        if (similarDrug != null) {
+          // 找到相似名稱，顯示對話框
+          _showSimilarDrugDialog(medication, similarDrug);
+          return; // 等待用戶確認，不繼續執行
+        } else {
+          throw Exception('藥物名稱無效，且未找到相似名稱');
+        }
       }
 
       final sql = """
-        INSERT INTO Medications (PatientID, DrugID, Timing, Dose, days)
+        INSERT INTO medications (PatientID, DrugID, Timing, Dose, days)
         VALUES (
             (SELECT PatientID FROM patients WHERE PatientName = '$patientName'),
             (SELECT DrugID FROM drugs WHERE DrugName = '$medication'),
@@ -2146,6 +2247,7 @@ class _PrescriptionResultScreenState extends State<PrescriptionResultScreen> {
         throw Exception(errorMsg);
       }
     } catch (e) {
+      debugPrint('保存錯誤: $e');
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('錯誤: $e')),
       );
