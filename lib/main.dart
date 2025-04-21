@@ -1946,39 +1946,58 @@ class _PrescriptionResultScreenState extends State<PrescriptionResultScreen> {
   final TextEditingController _daysController = TextEditingController();
   String? _errorMessage;
   bool _isSaving = false;
+  ScaffoldMessengerState? _scaffoldMessenger;
 
   @override
   void initState() {
     super.initState();
+    _syncAuthData(); // 同步認證數據
     _parseJsonResponse();
     _patientNameController.text = appState.currentPatientName ?? '未選擇患者';
+    // 檢查登錄狀態
+    _checkLoginStatus();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _scaffoldMessenger = ScaffoldMessenger.of(context);
+  }
+
+  void _checkLoginStatus() {
+    if (appState.usernameController.text.isEmpty || appState.passwordController.text.isEmpty) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) {
+          Navigator.pushReplacementNamed(context, '/login');
+          _scaffoldMessenger?.showSnackBar(
+            SnackBar(content: Text('請先登錄')),
+          );
+        }
+      });
+    }
+  }
+
+  void _syncAuthData() {
+    if (appState.usernameController.text.isEmpty && widget.usernameController.text.isNotEmpty) {
+      appState.usernameController.text = widget.usernameController.text;
+    }
+    if (appState.passwordController.text.isEmpty && widget.passwordController.text.isNotEmpty) {
+      appState.passwordController.text = widget.passwordController.text;
+    }
   }
 
   void _parseJsonResponse() {
     try {
-      debugPrint('Raw JSON Response: ${widget.jsonResponse}');
       var jsonData = jsonDecode(widget.jsonResponse);
-
-      // 如果 jsonData 是 String，嘗試二次解析
       if (jsonData is String) {
-        debugPrint('jsonData is String, attempting secondary parse: $jsonData');
-        try {
-          jsonData = jsonDecode(jsonData);
-        } catch (e) {
-          throw Exception('服務器返回純文本或無效 JSON: $jsonData');
-        }
+        jsonData = jsonDecode(jsonData);
       }
-
-      // 確認 jsonData 是 Map
       if (jsonData is! Map<String, dynamic>) {
-        throw Exception('JSON 根結構必須是物件（Map），實際是: ${jsonData.runtimeType}');
+        throw Exception('JSON 格式錯誤');
       }
 
-      // 處理 usage 字段
       String usageText = '';
       final usage = jsonData['usage'];
-      debugPrint('Usage field type: ${usage.runtimeType}, value: $usage');
-
       if (usage is List<dynamic>) {
         usageText = usage.map((e) => e?.toString() ?? '').join(', ');
       } else if (usage is Map<dynamic, dynamic>) {
@@ -1987,24 +2006,24 @@ class _PrescriptionResultScreenState extends State<PrescriptionResultScreen> {
         usageText = usage;
       } else if (usage != null) {
         usageText = usage.toString();
-      } else {
-        debugPrint('Usage field is null');
       }
 
-      setState(() {
-        _medicationController.text = jsonData['medication']?.toString() ?? '';
-        _usageController.text = usageText;
-        _dosageController.text = jsonData['dosage']?.toString() ?? '';
-        _appearanceController.text = jsonData['appearance']?.toString() ?? '';
-        _daysController.text = jsonData['days']?.toString() ?? '';
-        _errorMessage = null;
-      });
-    } catch (e, stackTrace) {
-      debugPrint('JSON Parsing Error: $e');
-      debugPrint('Stack Trace: $stackTrace');
-      setState(() {
-        _errorMessage = 'JSON 解析錯誤: $e';
-      });
+      if (mounted) {
+        setState(() {
+          _medicationController.text = jsonData['medication']?.toString() ?? '';
+          _usageController.text = usageText;
+          _dosageController.text = jsonData['dosage']?.toString() ?? '';
+          _appearanceController.text = jsonData['appearance']?.toString() ?? '';
+          _daysController.text = jsonData['days']?.toString() ?? '';
+          _errorMessage = null;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _errorMessage = 'JSON 解析錯誤: $e';
+        });
+      }
     }
   }
 
@@ -2017,12 +2036,12 @@ class _PrescriptionResultScreenState extends State<PrescriptionResultScreen> {
       final sanitizedPatientName = _sanitizeInput(patientName);
       final sanitizedDrugName = _sanitizeInput(drugName);
 
-      final patientCheck = await http.post(
+      final patientCheck = http.post(
         Uri.parse('https://project.1114580.xyz/data'),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({
-          'username': widget.usernameController.text,
-          'password': widget.passwordController.text,
+          'username': appState.usernameController.text,
+          'password': appState.passwordController.text,
           'requestType': 'sql search',
           'data': {
             'sql': "SELECT PatientID FROM patients WHERE PatientName = '$sanitizedPatientName'"
@@ -2030,12 +2049,12 @@ class _PrescriptionResultScreenState extends State<PrescriptionResultScreen> {
         }),
       );
 
-      final drugCheck = await http.post(
+      final drugCheck = http.post(
         Uri.parse('https://project.1114580.xyz/data'),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({
-          'username': widget.usernameController.text,
-          'password': widget.passwordController.text,
+          'username': appState.usernameController.text,
+          'password': appState.passwordController.text,
           'requestType': 'sql search',
           'data': {
             'sql': "SELECT DrugID FROM drugs WHERE DrugName = '$sanitizedDrugName'"
@@ -2043,20 +2062,20 @@ class _PrescriptionResultScreenState extends State<PrescriptionResultScreen> {
         }),
       );
 
-      debugPrint('Patient Check Response: ${patientCheck.body}');
-      debugPrint('Drug Check Response: ${drugCheck.body}');
+      final responses = await Future.wait([patientCheck, drugCheck]);
+      final patientResponse = responses[0];
+      final drugResponse = responses[1];
 
-      final patientData = jsonDecode(patientCheck.body);
-      final drugData = jsonDecode(drugCheck.body);
+      final patientData = jsonDecode(patientResponse.body);
+      final drugData = jsonDecode(drugResponse.body);
 
-      return patientCheck.statusCode == 200 &&
-          drugCheck.statusCode == 200 &&
+      return patientResponse.statusCode == 200 &&
+          drugResponse.statusCode == 200 &&
           patientData is List &&
           patientData.isNotEmpty &&
           drugData is List &&
           drugData.isNotEmpty;
     } catch (e) {
-      debugPrint('驗證患者和藥物失敗: $e');
       return false;
     }
   }
@@ -2071,24 +2090,19 @@ class _PrescriptionResultScreenState extends State<PrescriptionResultScreen> {
         LIMIT 1
       """;
 
-      debugPrint('查詢相似藥物 SQL: $sql');
-
       final response = await http.post(
         Uri.parse('https://project.1114580.xyz/data'),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({
-          'username': widget.usernameController.text,
-          'password': widget.passwordController.text,
+          'username': appState.usernameController.text,
+          'password': appState.passwordController.text,
           'requestType': 'sql search',
           'data': {'sql': sql}
         }),
       );
 
-      debugPrint('查詢相似藥物 HTTP 狀態碼: ${response.statusCode}');
-      debugPrint('查詢相似藥物響應內容: ${response.body}');
-
       if (response.statusCode != 200) {
-        throw Exception('查詢相似藥物失敗: HTTP ${response.statusCode}');
+        return null;
       }
 
       final responseData = jsonDecode(response.body);
@@ -2097,12 +2111,41 @@ class _PrescriptionResultScreenState extends State<PrescriptionResultScreen> {
       }
       return null;
     } catch (e) {
-      debugPrint('查詢相似藥物失敗: $e');
       return null;
     }
   }
 
+  Future<bool> _addDrugToDatabase(String drugName) async {
+    try {
+      final sanitizedDrugName = _sanitizeInput(drugName);
+      final sql = """
+        INSERT INTO drugs (DrugName)
+        VALUES ('$sanitizedDrugName');
+      """;
+
+      final response = await http.post(
+        Uri.parse('https://project.1114580.xyz/data'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'username': appState.usernameController.text,
+          'password': appState.passwordController.text,
+          'requestType': 'sql update',
+          'data': {'sql': sql}
+        }),
+      );
+
+      if (response.statusCode == 200) {
+        return true;
+      } else {
+        throw Exception('插入藥物失敗: HTTP ${response.statusCode}');
+      }
+    } catch (e) {
+      throw e;
+    }
+  }
+
   void _showSimilarDrugDialog(String inputDrugName, String similarDrugName) {
+    if (!mounted) return;
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
@@ -2116,7 +2159,7 @@ class _PrescriptionResultScreenState extends State<PrescriptionResultScreen> {
             Text('資料庫中的相似名稱：$similarDrugName'),
             SizedBox(height: 16),
             Text(
-              '在資料庫裡有找到相似的名稱 請確認是否是下方的名稱',
+              '在資料庫裡有找到相似的名稱 請確認是否是這名稱',
               style: TextStyle(fontWeight: FontWeight.bold),
             ),
           ],
@@ -2124,18 +2167,20 @@ class _PrescriptionResultScreenState extends State<PrescriptionResultScreen> {
         actions: [
           TextButton(
             onPressed: () {
-              Navigator.of(context).pop(); // 關閉對話框
+              Navigator.of(context).pop();
+              _showNewDrugConfirmationDialog(inputDrugName);
             },
             child: Text('並不是這個藥名'),
           ),
           ElevatedButton(
             onPressed: () async {
-              Navigator.of(context).pop(); // 關閉對話框
-              // 更新 _medicationController 為相似藥物名稱
-              setState(() {
-                _medicationController.text = similarDrugName;
-              });
-              await _saveToServer(); // 執行上傳
+              Navigator.of(context).pop();
+              if (mounted) {
+                setState(() {
+                  _medicationController.text = similarDrugName;
+                });
+                await _saveToServer();
+              }
             },
             child: Text('確認上傳'),
           ),
@@ -2144,17 +2189,98 @@ class _PrescriptionResultScreenState extends State<PrescriptionResultScreen> {
     );
   }
 
-  Future<void> _saveToServer() async {
-    if (_isSaving) return;
+  void _showNewDrugConfirmationDialog(String inputDrugName) {
+    if (!mounted) return;
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('確認新藥物'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('您準備輸入的藥物名稱：$inputDrugName'),
+            SizedBox(height: 16),
+            Text(
+              '現在尚未登記此種藥物 確認無誤後會先將藥物傳到資料庫後再更新患者資料',
+              style: TextStyle(fontWeight: FontWeight.bold),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () {
+              Navigator.of(context).pop();
+            },
+            child: Text('取消'),
+          ),
+          ElevatedButton(
+            onPressed: _isSaving
+                ? null
+                : () async {
+                    Navigator.of(context).pop();
+                    if (!mounted) return;
+                    setState(() {
+                      _isSaving = true;
+                    });
+                    try {
+                      _syncAuthData(); // 確保認證數據有效
+                      if (appState.usernameController.text.isEmpty ||
+                          appState.passwordController.text.isEmpty) {
+                        throw Exception('認證數據無效，請重新登錄');
+                      }
+                      final success = await _addDrugToDatabase(inputDrugName);
+                      if (!success) {
+                        throw Exception('無法將藥物名稱添加到資料庫');
+                      }
+                      if (mounted) {
+                        setState(() {
+                          _medicationController.text = inputDrugName;
+                        });
+                      } else {
+                        throw Exception('頁面已關閉，無法繼續保存');
+                      }
+                      await _saveToServer(force: true);
+                      if (mounted && _scaffoldMessenger != null) {
+                        _scaffoldMessenger!.showSnackBar(
+                          SnackBar(content: Text('資料保存成功')),
+                        );
+                      }
+                    } catch (e) {
+                      if (mounted && _scaffoldMessenger != null) {
+                        _scaffoldMessenger!.showSnackBar(
+                          SnackBar(content: Text('錯誤: $e')),
+                        );
+                      }
+                    } finally {
+                      if (mounted) {
+                        setState(() {
+                          _isSaving = false;
+                        });
+                      }
+                    }
+                  },
+            child: Text('確認上傳'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _saveToServer({bool force = false}) async {
+    if (_isSaving && !force) return;
+    if (!mounted) return;
 
     if (appState.currentPatientName == null ||
         _medicationController.text.isEmpty ||
         _usageController.text.isEmpty ||
         _dosageController.text.isEmpty ||
         _daysController.text.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('請填寫所有必要字段（患者、藥物名稱、用藥時間、劑量、處方天數）')),
-      );
+      if (mounted && _scaffoldMessenger != null) {
+        _scaffoldMessenger!.showSnackBar(
+          SnackBar(content: Text('請填寫所有必要字段')),
+        );
+      }
       return;
     }
 
@@ -2163,20 +2289,10 @@ class _PrescriptionResultScreenState extends State<PrescriptionResultScreen> {
     });
 
     try {
-      final username = widget.usernameController.text;
-      final password = widget.passwordController.text;
-      debugPrint('Username (widget): $username');
-      debugPrint('Password (widget): $password');
-      debugPrint('Username (appState): ${appState.usernameController.text}');
-      debugPrint('Password (appState): ${appState.passwordController.text}');
-
+      final username = appState.usernameController.text;
+      final password = appState.passwordController.text;
       if (username.isEmpty || password.isEmpty) {
-        throw Exception('用戶名或密碼為空');
-      }
-
-      if (username != appState.usernameController.text ||
-          password != appState.passwordController.text) {
-        debugPrint('警告：widget 和 appState 的認證數據不一致');
+        throw Exception('認證數據無效，請重新登錄');
       }
 
       final patientName = _sanitizeInput(appState.currentPatientName!);
@@ -2193,14 +2309,13 @@ class _PrescriptionResultScreenState extends State<PrescriptionResultScreen> {
 
       final isValid = await _verifyPatientAndDrug(patientName, medication);
       if (!isValid) {
-        // 藥物驗證失敗，查詢相似藥物名稱
         final similarDrug = await _checkSimilarDrugName(medication);
         if (similarDrug != null) {
-          // 找到相似名稱，顯示對話框
-          _showSimilarDrugDialog(medication, similarDrug);
-          return; // 等待用戶確認，不繼續執行
+          if (mounted) _showSimilarDrugDialog(medication, similarDrug);
+          return;
         } else {
-          throw Exception('藥物名稱無效，且未找到相似名稱');
+          if (mounted) _showNewDrugConfirmationDialog(medication);
+          return;
         }
       }
 
@@ -2215,50 +2330,49 @@ class _PrescriptionResultScreenState extends State<PrescriptionResultScreen> {
         );
       """;
 
-      debugPrint('SQL: $sql');
-      final requestBody = jsonEncode({
-        'username': username,
-        'password': password,
-        'requestType': 'sql update',
-        'data': {
-          'sql': sql,
-        },
-      });
-      debugPrint('Request Body: $requestBody');
-
       final response = await http.post(
         Uri.parse('https://project.1114580.xyz/data'),
         headers: {'Content-Type': 'application/json'},
-        body: requestBody,
+        body: jsonEncode({
+          'username': username,
+          'password': password,
+          'requestType': 'sql update',
+          'data': {'sql': sql}
+        }),
       );
 
       if (response.statusCode == 200) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('資料保存成功')),
-        );
-        _resetForm();
+        if (mounted && _scaffoldMessenger != null) {
+          _scaffoldMessenger!.showSnackBar(
+            SnackBar(content: Text('資料保存成功')),
+          );
+          _resetForm();
+        }
       } else {
         String errorMsg = '保存失敗: HTTP ${response.statusCode}';
         try {
           final errorData = jsonDecode(response.body);
           errorMsg = errorData['error']?.toString() ?? errorMsg;
         } catch (_) {}
-        debugPrint('Response Body: ${response.body}');
         throw Exception(errorMsg);
       }
     } catch (e) {
-      debugPrint('保存錯誤: $e');
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('錯誤: $e')),
-      );
+      if (mounted && _scaffoldMessenger != null) {
+        _scaffoldMessenger!.showSnackBar(
+          SnackBar(content: Text('錯誤: $e')),
+        );
+      }
     } finally {
-      setState(() {
-        _isSaving = false;
-      });
+      if (mounted) {
+        setState(() {
+          _isSaving = false;
+        });
+      }
     }
   }
 
   void _resetForm() {
+    if (!mounted) return;
     _medicationController.clear();
     _usageController.clear();
     _dosageController.clear();
@@ -2277,6 +2391,7 @@ class _PrescriptionResultScreenState extends State<PrescriptionResultScreen> {
     _dosageController.dispose();
     _appearanceController.dispose();
     _daysController.dispose();
+    _scaffoldMessenger = null;
     super.dispose();
   }
 
