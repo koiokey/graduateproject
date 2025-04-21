@@ -249,6 +249,68 @@ class _HomeScreenState extends State<HomeScreen> {
   String? selectedPatient;
   String? selectedPatientId;
   int _currentIndex = 0;
+  bool _isLoading = true;
+  List<Map<String, dynamic>> _patients = [];
+  String? _errorMessage;
+
+  @override
+  void initState() {
+    super.initState();
+    _fetchPatients(); // 初始化時獲取患者資料
+  }
+
+  Future<void> _fetchPatients() async {
+    if (appState.centerId == null) {
+      setState(() {
+        _errorMessage = '未找到中心 ID';
+        _isLoading = false;
+      });
+      return;
+    }
+
+    try {
+      final response = await http.post(
+        Uri.parse('https://project.1114580.xyz/data'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'username': widget.usernameController.text,
+          'password': widget.passwordController.text,
+          'requestType': 'sql search',
+          'data': {
+            'sql': '''
+              SELECT PatientName, PatientPicture, PatientID
+              FROM patients
+              WHERE CenterID = '${appState.centerId}'
+            ''',
+          },
+        }),
+      );
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        debugPrint('API Response (HomeScreen): $data'); // 記錄 API 回應以便除錯
+        if (data is List) {
+          setState(() {
+            _patients = data.map((item) => {
+              'PatientName': item['PatientName']?.toString() ?? '未知姓名',
+              'PatientPicture': item['PatientPicture']?.toString(),
+              'PatientID': item['PatientID']?.toString() ?? '未知ID',
+            }).toList();
+            _isLoading = false;
+          });
+        } else {
+          throw Exception('無效的資料格式');
+        }
+      } else {
+        throw Exception('伺服器錯誤: ${response.statusCode}');
+      }
+    } catch (e) {
+      setState(() {
+        _errorMessage = '獲取患者資料失敗: $e';
+        _isLoading = false;
+      });
+    }
+  }
 
   Future<void> _logout(BuildContext context) async {
     await appState.clearAll();
@@ -256,6 +318,202 @@ class _HomeScreenState extends State<HomeScreen> {
       context,
       '/',
       (Route<dynamic> route) => false,
+    );
+  }
+
+  bool _isValidBase64(String? base64Str) {
+    if (base64Str == null || base64Str.isEmpty) return false;
+    final cleanStr = base64Str.replaceAll(RegExp(r'^data:image/[^;]+;base64,'), '');
+    if (cleanStr.length % 4 != 0) return false;
+    final base64Pattern = RegExp(r'^[A-Za-z0-9+/=]+$');
+    return base64Pattern.hasMatch(cleanStr);
+  }
+
+  void _showFunctionDialog(Map<String, dynamic> patient) {
+    final patientName = patient['PatientName'] as String;
+    final patientId = patient['PatientID'] as String;
+
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('選擇功能 - $patientName'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            SizedBox(
+              width: 150,
+              child: ElevatedButton(
+                style: ElevatedButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(vertical: 20),
+                  backgroundColor: Colors.green[200],
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                ),
+                onPressed: () {
+                  Navigator.pop(context); // 關閉對話框
+                  Navigator.pushNamed(context, '/medicine_recognition');
+                  appState.setCurrentPatient(patientName); // 更新 appState
+                },
+                child: Text(
+                  '藥物辨識檢測',
+                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                  textAlign: TextAlign.center,
+                ),
+              ),
+            ),
+            SizedBox(height: 8),
+            SizedBox(
+              width: 150,
+              child: ElevatedButton(
+                style: ElevatedButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(vertical: 20),
+                  backgroundColor: Colors.green[200],
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                ),
+                onPressed: () {
+                  Navigator.pop(context); // 關閉對話框
+                  Navigator.pushNamed(context, '/prescription_capture');
+                  appState.setCurrentPatient(patientName); // 更新 appState
+                },
+                child: Text(
+                  '藥單自動鍵值',
+                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                  textAlign: TextAlign.center,
+                ),
+              ),
+            ),
+            SizedBox(height: 8),
+            SizedBox(
+              width: 150,
+              child: ElevatedButton(
+                style: ElevatedButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(vertical: 20),
+                  backgroundColor: Colors.green[200],
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                ),
+                onPressed: () {
+                  Navigator.pop(context); // 關閉對話框
+                  Navigator.pushNamed(
+                    context,
+                    '/patient_management',
+                    arguments: {
+                      'patientName': patientName,
+                      'patientId': patientId,
+                    },
+                  );
+                  appState.setCurrentPatient(patientName); // 更新 appState
+                },
+                child: Text(
+                  '患者資料管理',
+                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                  textAlign: TextAlign.center,
+                ),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: Text('取消'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildPatientButton(Map<String, dynamic> patient) {
+    final patientName = patient['PatientName'] as String;
+    final patientPicture = patient['PatientPicture'] as String?;
+
+    return ElevatedButton(
+      style: ElevatedButton.styleFrom(
+        padding: EdgeInsets.all(8),
+        backgroundColor: Colors.green[100],
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(8),
+        ),
+        elevation: 2,
+      ),
+      onPressed: () => _showFunctionDialog(patient),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          _isValidBase64(patientPicture)
+              ? ClipRRect(
+                  borderRadius: BorderRadius.circular(8),
+                  child: Image.memory(
+                    base64Decode(patientPicture!),
+                    width: 60,
+                    height: 60,
+                    fit: BoxFit.cover,
+                    errorBuilder: (context, error, stackTrace) => Icon(
+                      Icons.broken_image,
+                      size: 60,
+                      color: Colors.grey,
+                    ),
+                  ),
+                )
+              : Icon(
+                  Icons.person,
+                  size: 60,
+                  color: Colors.grey,
+                ),
+          SizedBox(height: 8),
+          Text(
+            patientName,
+            style: TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.bold,
+              color: Colors.black87,
+            ),
+            textAlign: TextAlign.center,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildBlankPage() {
+    return Container(
+      color: Colors.white,
+      child: _isLoading
+          ? Center(child: CircularProgressIndicator())
+          : _errorMessage != null
+              ? Center(
+                  child: Text(
+                    _errorMessage!,
+                    style: TextStyle(color: Colors.red, fontSize: 18),
+                    textAlign: TextAlign.center,
+                  ),
+                )
+              : _patients.isEmpty
+                  ? Center(
+                      child: Text(
+                        '無患者資料',
+                        style: TextStyle(fontSize: 18, color: Colors.grey),
+                      ),
+                    )
+                  : GridView.builder(
+                      padding: EdgeInsets.all(8),
+                      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                        crossAxisCount: 3, // 每行三個按鈕
+                        crossAxisSpacing: 8,
+                        mainAxisSpacing: 8,
+                        childAspectRatio: 1, // 按鈕寬高比為 1（正方形）
+                      ),
+                      itemCount: _patients.length,
+                      itemBuilder: (context, index) {
+                        return _buildPatientButton(_patients[index]);
+                      },
+                    ),
     );
   }
 
@@ -347,18 +605,6 @@ class _HomeScreenState extends State<HomeScreen> {
             ],
           ),
         ],
-      ),
-    );
-  }
-
-  Widget _buildBlankPage() {
-    return Container(
-      color: Colors.white,
-      child: Center(
-        child: Text(
-          '空白頁面',
-          style: TextStyle(fontSize: 24, color: Colors.grey),
-        ),
       ),
     );
   }
@@ -467,7 +713,6 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 }
-
 
 //本身
 class PatientSelfManagementScreen extends StatefulWidget {
