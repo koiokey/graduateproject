@@ -1023,18 +1023,15 @@ class MedicineRecognitionScreen extends StatefulWidget {
   final TextEditingController usernameController;
   final TextEditingController passwordController;
 
-
   MedicineRecognitionScreen({
     required this.cameras,
     required this.usernameController,
     required this.passwordController,
   });
 
-
   @override
   _MedicineRecognitionScreenState createState() => _MedicineRecognitionScreenState();
 }
-
 
 class _MedicineRecognitionScreenState extends State<MedicineRecognitionScreen> {
   String? selectedMedicine;
@@ -1050,11 +1047,15 @@ class _MedicineRecognitionScreenState extends State<MedicineRecognitionScreen> {
   bool _isProcessing = false;
   Offset? _focusPoint; // 儲存對焦點位置
   bool _isFocusing = false; // 標記是否正在對焦
+  String? _selectedTiming = '飯前'; // 下拉式選單預設值
 
   @override
   void initState() {
     super.initState();
     _initializeCamera();
+    if (appState.currentPatientId != null) {
+      _fetchPatientMedications(); // 初始化時查詢藥物
+    }
   }
 
   Future<void> _initializeCamera() async {
@@ -1092,10 +1093,16 @@ class _MedicineRecognitionScreenState extends State<MedicineRecognitionScreen> {
     }
   }
 
-  @override
-  void dispose() {
-    _cameraController?.dispose();
-    super.dispose();
+  String _getTimeOfDay() {
+    final now = DateTime.now();
+    final hour = now.hour;
+    if (hour >= 1 && hour < 11) {
+      return '早上';
+    } else if (hour >= 11 && hour < 16) {
+      return '中午';
+    } else {
+      return '晚上';
+    }
   }
 
   Future<void> _setFocusPoint(Offset point, Size screenSize) async {
@@ -1127,7 +1134,6 @@ class _MedicineRecognitionScreenState extends State<MedicineRecognitionScreen> {
     }
   }
 
-  // 添加與 PrescriptionCaptureScreenState 一致的 Loading 對話框方法
   void showLoadingDialog(BuildContext context) {
     showDialog(
       context: context,
@@ -1315,6 +1321,7 @@ class _MedicineRecognitionScreenState extends State<MedicineRecognitionScreen> {
               .toList() ?? <Map<String, dynamic>>[];
           final String? annotatedImageBase64 = responseData['image'] as String?;
 
+          await _fetchPatientMedications();
           await _compareMedications(detections);
 
           // 隱藏 Loading 畫面
@@ -1354,12 +1361,31 @@ class _MedicineRecognitionScreenState extends State<MedicineRecognitionScreen> {
   }
 
   Future<void> _fetchPatientMedications() async {
-    if (appState.currentPatientId == null) return;
+    if (appState.currentPatientId == null) {
+      debugPrint('患者 ID 為空，無法查詢藥物');
+      return;
+    }
 
     try {
       final currentDate = DateTime.now();
       final formattedCurrentDate =
           "${currentDate.year}-${currentDate.month.toString().padLeft(2, '0')}-${currentDate.day.toString().padLeft(2, '0')}";
+
+      String timingCondition = '';
+      final timeOfDay = _getTimeOfDay();
+      if (_selectedTiming == '睡前') {
+        timingCondition = "AND Timing = '睡前'";
+      } else {
+        final timingMap = {
+          '早上': {'飯前': '早餐前', '飯後': '早餐後'},
+          '中午': {'飯前': '中餐前', '飯後': '中餐後'},
+          '晚上': {'飯前': '晚餐前', '飯後': '晚餐後'},
+        };
+        final timingValue = timingMap[timeOfDay]?[_selectedTiming];
+        if (timingValue != null) {
+          timingCondition = "AND Timing = '$timingValue'";
+        }
+      }
 
       final response = await http.post(
         Uri.parse('https://project.1114580.xyz/data'),
@@ -1376,6 +1402,7 @@ class _MedicineRecognitionScreenState extends State<MedicineRecognitionScreen> {
                     FROM medications
                     WHERE PatientID = '${appState.currentPatientId}'
                       AND DATE_ADD(Added_Day, INTERVAL days DAY) >= '$formattedCurrentDate'
+                      $timingCondition
                     ) m
                     JOIN drugs d ON m.DrugID = d.DrugID
                     JOIN (
@@ -1391,19 +1418,29 @@ class _MedicineRecognitionScreenState extends State<MedicineRecognitionScreen> {
         }),
       );
 
-      final responseData = jsonDecode(response.body);
-      if (responseData is List) {
-        setState(() {
-          _patientMedications = responseData
-              .map((item) => {
-                    'drugName': item['DrugName']?.toString().toLowerCase() ?? '',
-                    'dose': int.tryParse(item['Dose']?.toString() ?? '0') ?? 0,
-                  })
-              .toList();
-        });
+      if (response.statusCode == 200) {
+        final responseData = jsonDecode(response.body);
+        debugPrint('Medications API Response: $responseData'); // 記錄 API 回應
+        if (responseData is List) {
+          setState(() {
+            _patientMedications = responseData
+                .map((item) => {
+                      'drugName': item['DrugName']?.toString().toLowerCase() ?? '',
+                      'dose': int.tryParse(item['Dose']?.toString() ?? '0') ?? 0,
+                    })
+                .toList();
+          });
+        } else {
+          throw Exception('無效的資料格式');
+        }
+      } else {
+        throw Exception('伺服器返回錯誤: ${response.statusCode}');
       }
     } catch (e) {
       debugPrint('獲取患者藥物失敗: $e');
+      setState(() {
+        _errorMessage = '獲取藥物資料失敗: $e';
+      });
     }
   }
 
@@ -1507,6 +1544,26 @@ class _MedicineRecognitionScreenState extends State<MedicineRecognitionScreen> {
                           ),
                         ],
                       ),
+                    ),
+                    SizedBox(height: 20),
+                    DropdownButtonFormField<String>(
+                      decoration: InputDecoration(
+                        labelText: '用藥時段',
+                        border: OutlineInputBorder(),
+                      ),
+                      value: _selectedTiming,
+                      items: ['飯前', '飯後', '睡前'].map((timing) {
+                        return DropdownMenuItem(
+                          value: timing,
+                          child: Text(timing),
+                        );
+                      }).toList(),
+                      onChanged: (value) {
+                        setState(() {
+                          _selectedTiming = value;
+                          _fetchPatientMedications(); // 重新查詢藥物
+                        });
+                      },
                     ),
                     SizedBox(height: 20),
                     ElevatedButton.icon(
@@ -2081,6 +2138,7 @@ class _PatientManagementScreenState extends State<PatientManagementScreen> {
   }
 }
 
+//按鈕類別
 class FeatureButton extends StatelessWidget {
   final String title;
   final VoidCallback onPressed;
