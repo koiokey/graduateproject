@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:camera/camera.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:image/image.dart' as img;
 import 'dart:io'; // 用於處理檔案路徑
 import 'dart:convert'; // 用於 Base64 編碼
 import 'app_state.dart'; // 添加這行導入
@@ -89,89 +90,87 @@ class _LoginScreenState extends State<LoginScreen> {
     }
   }
 
-  Future<void> _login() async {
-    setState(() {
-      isLoading = true;
-    });
+Future<void> _login() async {
+  setState(() {
+    isLoading = true;
+  });
 
-    final loginJsonData = {
-      "username": widget.usernameController.text,
-      "password": widget.passwordController.text,
-      "requestType": "sql search",
-      "data": {
-        "sql": "SELECT CenterID, CenterAccount, CenterPassword FROM accounts"
+  final loginJsonData = {
+    "username": widget.usernameController.text,
+    "password": widget.passwordController.text,
+    "requestType": "sql verify",
+    "data": {
+      "sql": "SELECT CenterID, CenterAccount, CenterPassword FROM accounts"
+    }
+  };
+
+  try {
+    // 發送驗證請求
+    final loginResponse = await http.post(
+      Uri.parse('https://project.1114580.xyz/data'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode(loginJsonData),
+    );
+
+    final loginResponseData = jsonDecode(loginResponse.body);
+
+    // 檢查回應是否為包含 CenterName 和 CenterID 的 JSON
+    if (loginResponseData is Map &&
+        loginResponseData.containsKey('CenterName') &&
+        loginResponseData.containsKey('CenterID')) {
+      final matchedCenterId = loginResponseData['CenterID']?.toString();
+      if (matchedCenterId == null) {
+        throw Exception('伺服器未提供 CenterID');
       }
-    };
 
-    try {
-      final loginResponse = await http.post(
+      // 設置 CenterID
+      appState.setCenterId(matchedCenterId);
+
+      // 可選：儲存 CenterName（如果需要）
+      // appState.setCenterName(loginResponseData['CenterName']);
+
+      // 查詢患者資料
+      final patientsJsonData = {
+        "username": widget.usernameController.text,
+        "password": widget.passwordController.text,
+        "requestType": "sql search",
+        "data": {
+          "sql": "SELECT PatientID, PatientName FROM patients WHERE CenterID = '$matchedCenterId'"
+        }
+      };
+
+      final patientsResponse = await http.post(
         Uri.parse('https://project.1114580.xyz/data'),
         headers: {'Content-Type': 'application/json'},
-        body: jsonEncode(loginJsonData),
+        body: jsonEncode(patientsJsonData),
       );
 
-      dynamic loginResponseData = jsonDecode(loginResponse.body);
+      final patientsResponseData = jsonDecode(patientsResponse.body);
 
-      if (loginResponseData is List) {
-        bool isValid = false;
-        String? matchedCenterId;
-
-        for (var account in loginResponseData) {
-          if (account['CenterAccount'] == widget.usernameController.text &&
-              account['CenterPassword'] == widget.passwordController.text) {
-            isValid = true;
-            matchedCenterId = account['CenterID']?.toString();
-            break;
-          }
-        }
-
-        if (isValid && matchedCenterId != null) {
-          appState.setCenterId(matchedCenterId);
-
-          final patientsJsonData = {
-            "username": widget.usernameController.text,
-            "password": widget.passwordController.text,
-            "requestType": "sql search",
-            "data": {
-              "sql": "SELECT PatientID, PatientName FROM patients WHERE CenterID = '$matchedCenterId'"
-            }
-          };
-
-          final patientsResponse = await http.post(
-            Uri.parse('https://project.1114580.xyz/data'),
-            headers: {'Content-Type': 'application/json'},
-            body: jsonEncode(patientsJsonData),
-          );
-
-          dynamic patientsResponseData = jsonDecode(patientsResponse.body);
-
-          if (patientsResponseData is List && patientsResponseData.isNotEmpty) {
-            appState.setPatients(patientsResponseData);
-          }
-
-          appState.setCredentials(
-            widget.usernameController.text,
-            widget.passwordController.text,
-          );
-
-          await appState.saveCredentials();
-
-          Navigator.pushReplacementNamed(context, '/home');
-        } else {
-          throw Exception("帳號或密碼不正確");
-        }
-      } else {
-        throw Exception("帳號或密碼不正確");
+      if (patientsResponseData is List && patientsResponseData.isNotEmpty) {
+        appState.setPatients(patientsResponseData);
       }
-    } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text("錯誤: ${e.toString()}")),
-      );
-    } finally {
-      setState(() => isLoading = false);
-    }
-  }
 
+      // 保存憑證
+      appState.setCredentials(
+        widget.usernameController.text,
+        widget.passwordController.text,
+      );
+      await appState.saveCredentials();
+
+      // 導航到首頁
+      Navigator.pushReplacementNamed(context, '/home');
+    } else {
+      throw Exception('帳號或密碼不正確');
+    }
+  } catch (e) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('錯誤: ${e.toString()}')),
+    );
+  } finally {
+    setState(() => isLoading = false);
+  }
+}
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -256,7 +255,7 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void initState() {
     super.initState();
-    _fetchPatients(); // 初始化時獲取患者資料
+    _fetchPatients();
   }
 
   Future<void> _fetchPatients() async {
@@ -288,7 +287,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
-        debugPrint('API Response (HomeScreen): $data'); // 記錄 API 回應以便除錯
+        debugPrint('API Response (HomeScreen): $data');
         if (data is List) {
           setState(() {
             _patients = data.map((item) => {
@@ -351,9 +350,9 @@ class _HomeScreenState extends State<HomeScreen> {
                   ),
                 ),
                 onPressed: () {
-                  Navigator.pop(context); // 關閉對話框
+                  Navigator.pop(context);
                   Navigator.pushNamed(context, '/medicine_recognition');
-                  appState.setCurrentPatient(patientName); // 更新 appState
+                  appState.setCurrentPatient(patientName);
                 },
                 child: Text(
                   '藥物辨識檢測',
@@ -374,9 +373,9 @@ class _HomeScreenState extends State<HomeScreen> {
                   ),
                 ),
                 onPressed: () {
-                  Navigator.pop(context); // 關閉對話框
+                  Navigator.pop(context);
                   Navigator.pushNamed(context, '/prescription_capture');
-                  appState.setCurrentPatient(patientName); // 更新 appState
+                  appState.setCurrentPatient(patientName);
                 },
                 child: Text(
                   '藥單自動鍵值',
@@ -397,7 +396,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   ),
                 ),
                 onPressed: () {
-                  Navigator.pop(context); // 關閉對話框
+                  Navigator.pop(context);
                   Navigator.pushNamed(
                     context,
                     '/patient_management',
@@ -406,7 +405,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       'patientId': patientId,
                     },
                   );
-                  appState.setCurrentPatient(patientName); // 更新 appState
+                  appState.setCurrentPatient(patientName);
                 },
                 child: Text(
                   '患者資料管理',
@@ -484,38 +483,387 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget _buildBlankPage() {
     return Container(
       color: Colors.white,
-      child: _isLoading
-          ? Center(child: CircularProgressIndicator())
-          : _errorMessage != null
-              ? Center(
-                  child: Text(
-                    _errorMessage!,
-                    style: TextStyle(color: Colors.red, fontSize: 18),
-                    textAlign: TextAlign.center,
-                  ),
-                )
-              : _patients.isEmpty
-                  ? Center(
-                      child: Text(
-                        '無患者資料',
-                        style: TextStyle(fontSize: 18, color: Colors.grey),
-                      ),
-                    )
-                  : GridView.builder(
-                      padding: EdgeInsets.all(8),
-                      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                        crossAxisCount: 3, // 每行三個按鈕
-                        crossAxisSpacing: 8,
-                        mainAxisSpacing: 8,
-                        childAspectRatio: 1, // 按鈕寬高比為 1（正方形）
-                      ),
-                      itemCount: _patients.length,
-                      itemBuilder: (context, index) {
-                        return _buildPatientButton(_patients[index]);
-                      },
-                    ),
+      child: Column(
+        children: [
+          Expanded(
+            child: _isLoading
+                ? Center(child: CircularProgressIndicator())
+                : _errorMessage != null
+                    ? Center(
+                        child: Text(
+                          _errorMessage!,
+                          style: TextStyle(color: Colors.red, fontSize: 18),
+                          textAlign: TextAlign.center,
+                        ),
+                      )
+                    : _patients.isEmpty
+                        ? Center(
+                            child: Text(
+                              '無患者資料',
+                              style: TextStyle(fontSize: 18, color: Colors.grey),
+                            ),
+                          )
+                        : GridView.builder(
+                            padding: EdgeInsets.all(8),
+                            gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                              crossAxisCount: 3,
+                              crossAxisSpacing: 8,
+                              mainAxisSpacing: 8,
+                              childAspectRatio: 1,
+                            ),
+                            itemCount: _patients.length,
+                            itemBuilder: (context, index) {
+                              return _buildPatientButton(_patients[index]);
+                            },
+                          ),
+          ),
+          // 新增患者按鈕
+          Padding(
+            padding: const EdgeInsets.all(16.0),
+            child: ElevatedButton.icon(
+              onPressed: () {
+                _showAddPatientDialog(context);
+              },
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.blue[400],
+                minimumSize: Size(double.infinity, 50),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(10),
+                ),
+              ),
+              icon: Icon(Icons.add, color: Colors.white),
+              label: Text(
+                '新增患者',
+                style: TextStyle(fontSize: 18, color: Colors.white),
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
+
+  // 顯示新增患者彈出視窗
+  void _showAddPatientDialog(BuildContext context) {
+  final TextEditingController nameController = TextEditingController();
+  File? selectedImage;
+
+  showDialog(
+    context: context,
+    builder: (dialogContext) {
+      return StatefulBuilder(
+        builder: (dialogContext, setDialogState) {
+          return AlertDialog(
+            backgroundColor: Colors.black54,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(12),
+            ),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                // 姓名輸入框
+                TextFormField(
+                  controller: nameController,
+                  decoration: InputDecoration(
+                    labelText: '患者姓名',
+                    labelStyle: TextStyle(color: Colors.white),
+                    enabledBorder: OutlineInputBorder(
+                      borderSide: BorderSide(color: Colors.white),
+                    ),
+                    focusedBorder: OutlineInputBorder(
+                      borderSide: BorderSide(color: Colors.blue),
+                    ),
+                  ),
+                  style: TextStyle(color: Colors.white),
+                ),
+                SizedBox(height: 16),
+                // 上傳照片按鈕
+                ElevatedButton.icon(
+                  onPressed: () async {
+                    final pickedImage = await _pickAndCropImage(dialogContext);
+                    if (pickedImage != null) {
+                      setDialogState(() {
+                        selectedImage = pickedImage;
+                      });
+                    }
+                  },
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.blue[400],
+                  ),
+                  icon: Icon(Icons.photo_library, color: Colors.white),
+                  label: Text(
+                    '選擇照片',
+                    style: TextStyle(color: Colors.white),
+                  ),
+                ),
+                SizedBox(height: 16),
+                // 照片預覽
+                if (selectedImage != null)
+                  Container(
+                    width: 200,
+                    height: 200,
+                    decoration: BoxDecoration(
+                      border: Border.all(color: Colors.white),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Image.file(
+                      selectedImage!,
+                      fit: BoxFit.cover,
+                      errorBuilder: (context, error, stackTrace) => Icon(
+                        Icons.broken_image,
+                        size: 100,
+                        color: Colors.grey,
+                      ),
+                    ),
+                  ),
+                SizedBox(height: 16),
+                // 按鈕區域
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                  children: [
+                    // 離開按鈕
+                    TextButton(
+                      onPressed: () {
+                        Navigator.of(dialogContext).pop();
+                      },
+                      child: Text(
+                        '離開',
+                        style: TextStyle(color: Colors.white),
+                      ),
+                    ),
+                    // 確認上傳按鈕
+                    TextButton(
+                      onPressed: () async {
+                        if (nameController.text.isEmpty) {
+                          ScaffoldMessenger.of(dialogContext).showSnackBar(
+                            SnackBar(content: Text('請輸入患者姓名')),
+                          );
+                          return;
+                        }
+                        if (selectedImage == null) {
+                          ScaffoldMessenger.of(dialogContext).showSnackBar(
+                            SnackBar(content: Text('請選擇患者照片')),
+                          );
+                          return;
+                        }
+
+                        // 執行上傳邏輯
+                        await _uploadPatientData(
+                          dialogContext,
+                          nameController.text,
+                          selectedImage!,
+                        );
+                      },
+                      child: Text(
+                        '確認上傳',
+                        style: TextStyle(color: Colors.blue),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          );
+        },
+      );
+    },
+  );
+}
+
+ Future<void> _uploadPatientData(BuildContext context, String patientName, File imageFile) async {
+  // 檢查 context 是否有效
+  if (!context.mounted) {
+    debugPrint('Context is not mounted, aborting upload');
+    return;
+  }
+
+  try {
+    // 顯示加載提示
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => const Center(child: CircularProgressIndicator()),
+    );
+
+    // 檢查 widget 中的控制器是否為 null
+    if (widget.usernameController == null || widget.passwordController == null) {
+      throw Exception('用戶名或密碼控制器未初始化');
+    }
+    if (widget.usernameController.text.isEmpty || widget.passwordController.text.isEmpty) {
+      throw Exception('用戶名或密碼為空');
+    }
+    if (appState.centerId == null) {
+      throw Exception('CenterID 未初始化');
+    }
+
+    // 將圖片轉為 Base64
+    final imageBytes = await imageFile.readAsBytes();
+    final base64Image = base64Encode(imageBytes);
+
+    // 構建 SQL 插入語句
+    final sanitizedPatientName = patientName.replaceAll("'", "''");
+    final sql = """
+      INSERT INTO patients (PatientName, PatientPicture, CenterID)
+      VALUES ('$sanitizedPatientName', '$base64Image', '${appState.centerId}')
+    """;
+
+    // 發送請求到後端
+    final response = await http.post(
+      Uri.parse('https://project.1114580.xyz/data'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({
+        'username': widget.usernameController.text,
+        'password': widget.passwordController.text,
+        'requestType': 'sql update',
+        'data': {'sql': sql},
+      }),
+    );
+
+    // 檢查 context 是否仍然有效
+    if (!context.mounted) {
+      debugPrint('Context is not mounted after HTTP request');
+      return;
+    }
+
+    // 關閉加載提示
+    Navigator.of(context, rootNavigator: true).pop();
+
+    if (response.statusCode == 200) {
+      // 關閉對話框
+      Navigator.of(context).pop();
+      // 刷新患者列表
+      await _fetchPatients();
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('患者新增成功')),
+      );
+    } else {
+      throw Exception('上傳失敗: HTTP ${response.statusCode}');
+    }
+  } catch (e, stackTrace) {
+    // 檢查 context 是否仍然有效
+    if (!context.mounted) {
+      debugPrint('Context is not mounted in catch block');
+      return;
+    }
+
+    // 關閉加載提示
+    Navigator.of(context, rootNavigator: true).pop();
+
+    // 記錄錯誤
+    debugPrint('患者數據上傳失敗: $e');
+    debugPrint('StackTrace: $stackTrace');
+
+    // 顯示錯誤提示
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('新增患者失敗: ${e.toString()}')),
+    );
+  }
+}
+
+
+Future<File?> _pickAndCropImage(BuildContext context) async {
+  try {
+    // 初始化 ImagePicker
+    final ImagePicker picker = ImagePicker();
+
+    // 從相簿選擇圖片
+    final XFile? pickedImage = await picker.pickImage(
+      source: ImageSource.gallery,
+      imageQuality: 50, // 壓縮圖片以減小檔案大小
+    );
+
+    // 如果用戶取消選擇，返回 null
+    if (pickedImage == null) {
+      return null;
+    }
+
+    // 檢查檔案是否存在
+    final File imageFile = File(pickedImage.path);
+    if (!await imageFile.exists()) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('選擇的圖片檔案不存在')),
+      );
+      return null;
+    }
+
+    // 檢查檔案大小（限制 5MB）
+    if (await imageFile.length() > 5 * 1024 * 1024) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('圖片檔案過大，請選擇較小的圖片')),
+      );
+      return null;
+    }
+
+    // 讀取圖片並調整尺寸為 640x640
+    final bytes = await imageFile.readAsBytes();
+    final img.Image? decodedImage = img.decodeImage(bytes);
+    if (decodedImage == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('無法解碼圖片')),
+      );
+      return null;
+    }
+
+    // 裁剪為正方形（取中心區域）
+    final int size = decodedImage.width < decodedImage.height ? decodedImage.width : decodedImage.height;
+    final img.Image croppedImage = img.copyCrop(
+      decodedImage,
+      x: (decodedImage.width - size) ~/ 2,
+      y: (decodedImage.height - size) ~/ 2,
+      width: size,
+      height: size,
+    );
+
+    // 調整尺寸為 640x640
+    final img.Image resizedImage = img.copyResize(
+      croppedImage,
+      width: 640,
+      height: 640,
+      interpolation: img.Interpolation.average,
+    );
+
+    // 保存壓縮後的圖片
+    final tempDir = await Directory.systemTemp.createTemp();
+    final tempFile = File('${tempDir.path}/resized_image.jpg');
+
+    // 初始壓縮品質設為 70
+    int quality = 70;
+    await tempFile.writeAsBytes(img.encodeJpg(resizedImage, quality: quality));
+
+    // 檢查檔案大小，若超過 500KB，降低品質
+    const maxFileSize = 500 * 1024; // 500KB
+    if (await tempFile.length() > maxFileSize) {
+      quality = 50;
+      await tempFile.writeAsBytes(img.encodeJpg(resizedImage, quality: quality));
+    }
+
+    // 驗證最終檔案大小
+    if (await tempFile.length() > maxFileSize) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('圖片壓縮後仍過大，請選擇其他圖片')),
+      );
+      return null;
+    }
+
+    // 確保檔案存在
+    if (!await tempFile.exists()) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('壓縮後的圖片檔案無法保存')),
+      );
+      return null;
+    }
+
+    return tempFile;
+  } catch (e, stackTrace) {
+    // 記錄錯誤以便除錯
+    debugPrint('圖片選擇或處理失敗: $e');
+    debugPrint('StackTrace: $stackTrace');
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('圖片處理失敗: $e')),
+    );
+    return null;
+  }
+}
 
   Widget _buildMainContent() {
     return Padding(
