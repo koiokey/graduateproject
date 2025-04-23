@@ -15,25 +15,24 @@ class AppState {
   TextEditingController usernameController = TextEditingController();
   TextEditingController passwordController = TextEditingController();
   bool rememberMe = false;
-
+  String? _username; 
+  String? _password; 
   // Getters
   String? get centerId => _centerId;
   List<dynamic> get patients => _patients;
   List<String> get patientNames => _patients.map((p) => p['PatientName'].toString()).toList();
   String? get currentPatientName => _currentPatientName;
   String? get currentPatientId => _currentPatientId;
-  String? _username; // 存储用户名
-  String? _password; // 存储密码
-
-  // 获取用户名
   String? get username => _username;
-  // 获取密码
   String? get password => _password;
+
    void setCredentials(String username, String password) {
     _username = username;
     _password = password;
+    usernameController.text = username;
+    passwordController.text = password;
   }
-
+  
   // Setters
   void setCenterId(String id) {
     _centerId = id;
@@ -43,21 +42,13 @@ class AppState {
     _patients = patients;
   }
 
-  void setCurrentPatient(String? name) {
+  void setCurrentPatient(String? name, String? id) {
     _currentPatientName = name;
-    if (name != null) {
-      // Find the corresponding patient ID
-      var patient = _patients.firstWhere(
-        (p) => p['PatientName'] == name,
-        orElse: () => {'PatientID': null},
-      );
-      _currentPatientId = patient['PatientID']?.toString();
-    } else {
-      _currentPatientId = null;
-    }
+    _currentPatientId = id;
+    debugPrint('AppState: Set current patient - Name: $name, ID: $id'); // 新增除錯輸出
   }
-  
-     Future<void> init() async {
+
+  Future<void> init() async {
     await _loadCredentials();
   }
 
@@ -65,10 +56,16 @@ class AppState {
   Future<void> _loadCredentials() async {
     final prefs = await SharedPreferences.getInstance();
     rememberMe = prefs.getBool('rememberMe') ?? false;
-    
+
     if (rememberMe) {
-      usernameController.text = prefs.getString('savedUsername') ?? '';
-      passwordController.text = prefs.getString('savedPassword') ?? '';
+      _username = prefs.getString('savedUsername') ?? '';
+      _password = prefs.getString('savedPassword') ?? '';
+      _centerId = prefs.getString('centerId') ?? '';
+      _currentPatientName = prefs.getString('currentPatientName') ?? '';
+      _currentPatientId = prefs.getString('currentPatientId') ?? '';
+      usernameController.text = _username ?? '';
+      passwordController.text = _password ?? '';
+      debugPrint('AppState: Loaded credentials - PatientID: $_currentPatientId'); // 新增除錯輸出
     }
   }
 
@@ -76,13 +73,20 @@ class AppState {
   Future<void> saveCredentials() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool('rememberMe', rememberMe);
-    
+
     if (rememberMe) {
-      await prefs.setString('savedUsername', usernameController.text);
-      await prefs.setString('savedPassword', passwordController.text);
+      await prefs.setString('savedUsername', _username ?? '');
+      await prefs.setString('savedPassword', _password ?? '');
+      await prefs.setString('centerId', _centerId ?? '');
+      await prefs.setString('currentPatientName', _currentPatientName ?? '');
+      await prefs.setString('currentPatientId', _currentPatientId ?? '');
+      debugPrint('AppState: Saved credentials - PatientID: $_currentPatientId'); // 新增除錯輸出
     } else {
       await prefs.remove('savedUsername');
       await prefs.remove('savedPassword');
+      await prefs.remove('centerId');
+      await prefs.remove('currentPatientName');
+      await prefs.remove('currentPatientId');
     }
   }
 
@@ -92,16 +96,17 @@ class AppState {
     _patients = [];
     _currentPatientName = null;
     _currentPatientId = null;
+    _username = null;
+    _password = null;
     usernameController.clear();
     passwordController.clear();
-    
+
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool('rememberMe', false);
+    await prefs.clear();
     rememberMe = false;
+    debugPrint('AppState: Cleared all state'); // 新增除錯輸出
   }
 }
-
-
 
 // Global instance
 final appState = AppState();
