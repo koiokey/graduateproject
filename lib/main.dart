@@ -247,7 +247,6 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> {
   String? selectedPatient;
   String? selectedPatientId;
-  int _currentIndex = 0;
   bool _isLoading = true;
   List<Map<String, dynamic>> _patients = [];
   String? _errorMessage;
@@ -296,14 +295,19 @@ class _HomeScreenState extends State<HomeScreen> {
               'PatientID': item['PatientID']?.toString() ?? '未知ID',
             }).toList();
             _isLoading = false;
+            _errorMessage = null;
           });
+          // 同步 appState
+  
         } else {
           throw Exception('無效的資料格式');
         }
       } else {
         throw Exception('伺服器錯誤: ${response.statusCode}');
       }
-    } catch (e) {
+    } catch (e, stackTrace) {
+      debugPrint('Fetch patients error: $e');
+      debugPrint('StackTrace: $stackTrace');
       setState(() {
         _errorMessage = '獲取患者資料失敗: $e';
         _isLoading = false;
@@ -322,10 +326,15 @@ class _HomeScreenState extends State<HomeScreen> {
 
   bool _isValidBase64(String? base64Str) {
     if (base64Str == null || base64Str.isEmpty) return false;
-    final cleanStr = base64Str.replaceAll(RegExp(r'^data:image/[^;]+;base64,'), '');
-    if (cleanStr.length % 4 != 0) return false;
-    final base64Pattern = RegExp(r'^[A-Za-z0-9+/=]+$');
-    return base64Pattern.hasMatch(cleanStr);
+    try {
+      final cleanStr = base64Str.replaceAll(RegExp(r'^data:image/[^;]+;base64,'), '');
+      if (cleanStr.length % 4 != 0) return false;
+      final base64Pattern = RegExp(r'^[A-Za-z0-9+/=]+$');
+      return base64Pattern.hasMatch(cleanStr);
+    } catch (e) {
+      debugPrint('Invalid base64 string: $e');
+      return false;
+    }
   }
 
   void _showFunctionDialog(Map<String, dynamic> patient) {
@@ -351,8 +360,12 @@ class _HomeScreenState extends State<HomeScreen> {
                 ),
                 onPressed: () {
                   Navigator.pop(context);
-                  Navigator.pushNamed(context, '/medicine_recognition');
+                  setState(() {
+                    selectedPatient = patientName;
+                    selectedPatientId = patientId;
+                  });
                   appState.setCurrentPatient(patientName);
+                  Navigator.pushNamed(context, '/medicine_recognition');
                 },
                 child: Text(
                   '藥物辨識檢測',
@@ -374,8 +387,12 @@ class _HomeScreenState extends State<HomeScreen> {
                 ),
                 onPressed: () {
                   Navigator.pop(context);
-                  Navigator.pushNamed(context, '/prescription_capture');
+                  setState(() {
+                    selectedPatient = patientName;
+                    selectedPatientId = patientId;
+                  });
                   appState.setCurrentPatient(patientName);
+                  Navigator.pushNamed(context, '/prescription_capture');
                 },
                 child: Text(
                   '藥單自動鍵值',
@@ -397,6 +414,11 @@ class _HomeScreenState extends State<HomeScreen> {
                 ),
                 onPressed: () {
                   Navigator.pop(context);
+                  setState(() {
+                    selectedPatient = patientName;
+                    selectedPatientId = patientId;
+                  });
+                  appState.setCurrentPatient(patientName);
                   Navigator.pushNamed(
                     context,
                     '/patient_management',
@@ -405,7 +427,6 @@ class _HomeScreenState extends State<HomeScreen> {
                       'patientId': patientId,
                     },
                   );
-                  appState.setCurrentPatient(patientName);
                 },
                 child: Text(
                   '患者資料管理',
@@ -427,7 +448,7 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _buildPatientButton(Map<String, dynamic> patient) {
-    final patientName = patient['PatientName'] as String;
+    final patientName = patient['PatientName'] as String? ?? '未知姓名';
     final patientPicture = patient['PatientPicture'] as String?;
 
     return ElevatedButton(
@@ -440,6 +461,7 @@ class _HomeScreenState extends State<HomeScreen> {
         elevation: 2,
       ),
       onPressed: () => _showFunctionDialog(patient),
+      onLongPress: () => _showPatientOptionsDialog(context, patient),
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
@@ -517,7 +539,6 @@ class _HomeScreenState extends State<HomeScreen> {
                             },
                           ),
           ),
-          // 新增患者按鈕
           Padding(
             padding: const EdgeInsets.all(16.0),
             child: ElevatedButton.icon(
@@ -543,418 +564,669 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  // 顯示新增患者彈出視窗
   void _showAddPatientDialog(BuildContext context) {
-  final TextEditingController nameController = TextEditingController();
-  File? selectedImage;
+    final TextEditingController nameController = TextEditingController();
+    File? selectedImage;
 
-  showDialog(
-    context: context,
-    builder: (dialogContext) {
-      return StatefulBuilder(
-        builder: (dialogContext, setDialogState) {
-          return AlertDialog(
-            backgroundColor: Colors.black54,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(12),
-            ),
-            content: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                // 姓名輸入框
-                TextFormField(
-                  controller: nameController,
-                  decoration: InputDecoration(
-                    labelText: '患者姓名',
-                    labelStyle: TextStyle(color: Colors.white),
-                    enabledBorder: OutlineInputBorder(
-                      borderSide: BorderSide(color: Colors.white),
-                    ),
-                    focusedBorder: OutlineInputBorder(
-                      borderSide: BorderSide(color: Colors.blue),
-                    ),
-                  ),
-                  style: TextStyle(color: Colors.white),
-                ),
-                SizedBox(height: 16),
-                // 上傳照片按鈕
-                ElevatedButton.icon(
-                  onPressed: () async {
-                    final pickedImage = await _pickAndCropImage(dialogContext);
-                    if (pickedImage != null) {
-                      setDialogState(() {
-                        selectedImage = pickedImage;
-                      });
-                    }
-                  },
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.blue[400],
-                  ),
-                  icon: Icon(Icons.photo_library, color: Colors.white),
-                  label: Text(
-                    '選擇照片',
-                    style: TextStyle(color: Colors.white),
-                  ),
-                ),
-                SizedBox(height: 16),
-                // 照片預覽
-                if (selectedImage != null)
-                  Container(
-                    width: 200,
-                    height: 200,
-                    decoration: BoxDecoration(
-                      border: Border.all(color: Colors.white),
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: Image.file(
-                      selectedImage!,
-                      fit: BoxFit.cover,
-                      errorBuilder: (context, error, stackTrace) => Icon(
-                        Icons.broken_image,
-                        size: 100,
-                        color: Colors.grey,
-                      ),
-                    ),
-                  ),
-                SizedBox(height: 16),
-                // 按鈕區域
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+    showDialog(
+      context: context,
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (dialogContext, setDialogState) {
+            return AlertDialog(
+              backgroundColor: Colors.black54,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
+              content: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
                   children: [
-                    // 離開按鈕
-                    TextButton(
-                      onPressed: () {
-                        Navigator.of(dialogContext).pop();
+                    TextFormField(
+                      controller: nameController,
+                      decoration: InputDecoration(
+                        labelText: '患者姓名',
+                        labelStyle: TextStyle(color: Colors.white),
+                        enabledBorder: OutlineInputBorder(
+                          borderSide: BorderSide(color: Colors.white),
+                        ),
+                        focusedBorder: OutlineInputBorder(
+                          borderSide: BorderSide(color: Colors.blue),
+                        ),
+                      ),
+                      style: TextStyle(color: Colors.white),
+                    ),
+                    SizedBox(height: 16),
+                    ElevatedButton.icon(
+                      onPressed: () async {
+                        final pickedImage = await _pickAndCropImage(dialogContext);
+                        if (pickedImage != null && dialogContext.mounted) {
+                          setDialogState(() {
+                            selectedImage = pickedImage;
+                          });
+                        }
                       },
-                      child: Text(
-                        '離開',
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.blue[400],
+                      ),
+                      icon: Icon(Icons.photo_library, color: Colors.white),
+                      label: Text(
+                        '選擇照片',
                         style: TextStyle(color: Colors.white),
                       ),
                     ),
-                    // 確認上傳按鈕
-                    TextButton(
-                      onPressed: () async {
-                        if (nameController.text.isEmpty) {
-                          ScaffoldMessenger.of(dialogContext).showSnackBar(
-                            SnackBar(content: Text('請輸入患者姓名')),
-                          );
-                          return;
-                        }
-                        if (selectedImage == null) {
-                          ScaffoldMessenger.of(dialogContext).showSnackBar(
-                            SnackBar(content: Text('請選擇患者照片')),
-                          );
-                          return;
-                        }
-
-                        // 執行上傳邏輯
-                        await _uploadPatientData(
-                          dialogContext,
-                          nameController.text,
-                          selectedImage!,
-                        );
-                      },
-                      child: Text(
-                        '確認上傳',
-                        style: TextStyle(color: Colors.blue),
+                    SizedBox(height: 16),
+                    Container(
+                      width: 200,
+                      height: 200,
+                      decoration: BoxDecoration(
+                        border: Border.all(color: Colors.white),
+                        borderRadius: BorderRadius.circular(8),
                       ),
+                      child: selectedImage != null
+                          ? Image.file(
+                              selectedImage!,
+                              fit: BoxFit.cover,
+                              errorBuilder: (context, error, stackTrace) => Icon(
+                                Icons.broken_image,
+                                size: 100,
+                                color: Colors.grey,
+                              ),
+                            )
+                          : Icon(
+                              Icons.person,
+                              size: 100,
+                              color: Colors.grey,
+                            ),
+                    ),
+                    SizedBox(height: 16),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                      children: [
+                        TextButton(
+                          onPressed: () {
+                            Navigator.of(dialogContext).pop();
+                          },
+                          child: Text(
+                            '離開',
+                            style: TextStyle(color: Colors.white),
+                          ),
+                        ),
+                        TextButton(
+                          onPressed: () async {
+                            if (nameController.text.isEmpty) {
+                              ScaffoldMessenger.of(dialogContext).showSnackBar(
+                                SnackBar(content: Text('請輸入患者姓名')),
+                              );
+                              return;
+                            }
+                            if (selectedImage == null) {
+                              ScaffoldMessenger.of(dialogContext).showSnackBar(
+                                SnackBar(content: Text('請選擇患者照片')),
+                              );
+                              return;
+                            }
+                            await _uploadPatientData(
+                              dialogContext,
+                              nameController.text,
+                              selectedImage!,
+                            );
+                          },
+                          child: Text(
+                            '確認上傳',
+                            style: TextStyle(color: Colors.blue),
+                          ),
+                        ),
+                      ],
                     ),
                   ],
                 ),
-              ],
-            ),
-          );
-        },
-      );
-    },
-  );
-}
-
- Future<void> _uploadPatientData(BuildContext context, String patientName, File imageFile) async {
-  // 檢查 context 是否有效
-  if (!context.mounted) {
-    debugPrint('Context is not mounted, aborting upload');
-    return;
+              ),
+            );
+          },
+        );
+      },
+    );
   }
 
-  try {
-    // 顯示加載提示
+  Future<void> _uploadPatientData(BuildContext context, String patientName, File imageFile) async {
+    if (!context.mounted) {
+      debugPrint('Context is not mounted, aborting upload');
+      return;
+    }
+
+    try {
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (context) => const Center(child: CircularProgressIndicator()),
+      );
+
+      if (widget.usernameController.text.isEmpty || widget.passwordController.text.isEmpty) {
+        throw Exception('用戶名或密碼為空');
+      }
+      if (appState.centerId == null) {
+        throw Exception('CenterID 未初始化');
+      }
+
+      final imageBytes = await imageFile.readAsBytes();
+      final base64Image = base64Encode(imageBytes);
+
+      final sanitizedPatientName = patientName.replaceAll("'", "''");
+      final sql = """
+        INSERT INTO patients (PatientName, PatientPicture, CenterID)
+        VALUES ('$sanitizedPatientName', '$base64Image', '${appState.centerId}')
+      """;
+
+      final response = await http.post(
+        Uri.parse('https://project.1114580.xyz/data'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'username': widget.usernameController.text,
+          'password': widget.passwordController.text,
+          'requestType': 'sql update',
+          'data': {'sql': sql},
+        }),
+      );
+
+      if (!context.mounted) {
+        debugPrint('Context is not mounted after HTTP request');
+        return;
+      }
+
+      Navigator.of(context, rootNavigator: true).pop();
+
+      if (response.statusCode == 200) {
+        Navigator.of(context).pop();
+        await _fetchPatients();
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('患者新增成功')),
+        );
+      } else {
+        throw Exception('上傳失敗: HTTP ${response.statusCode}');
+      }
+    } catch (e, stackTrace) {
+      if (!context.mounted) {
+        debugPrint('Context is not mounted in catch block');
+        return;
+      }
+      Navigator.of(context, rootNavigator: true).pop();
+      debugPrint('患者數據上傳失敗: $e');
+      debugPrint('StackTrace: $stackTrace');
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('新增患者失敗: ${e.toString()}')),
+      );
+    }
+  }
+
+  Future<File?> _pickAndCropImage(BuildContext context) async {
+    try {
+      final ImagePicker picker = ImagePicker();
+      final XFile? pickedImage = await picker.pickImage(
+        source: ImageSource.gallery,
+        imageQuality: 50,
+      );
+      if (pickedImage == null) {
+        return null;
+      }
+
+      final File imageFile = File(pickedImage.path);
+      if (!await imageFile.exists()) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('選擇的圖片檔案不存在')),
+        );
+        return null;
+      }
+
+      if (await imageFile.length() > 5 * 1024 * 1024) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('圖片檔案過大，請選擇較小的圖片')),
+        );
+        return null;
+      }
+
+      final bytes = await imageFile.readAsBytes();
+      final img.Image? decodedImage = img.decodeImage(bytes);
+      if (decodedImage == null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('無法解碼圖片')),
+        );
+        return null;
+      }
+
+      final int size = decodedImage.width < decodedImage.height ? decodedImage.width : decodedImage.height;
+      final img.Image croppedImage = img.copyCrop(
+        decodedImage,
+        x: (decodedImage.width - size) ~/ 2,
+        y: (decodedImage.height - size) ~/ 2,
+        width: size,
+        height: size,
+      );
+
+      final img.Image resizedImage = img.copyResize(
+        croppedImage,
+        width: 640,
+        height: 640,
+        interpolation: img.Interpolation.average,
+      );
+
+      final tempDir = await Directory.systemTemp.createTemp();
+      final tempFile = File('${tempDir.path}/resized_image.jpg');
+      int quality = 70;
+      await tempFile.writeAsBytes(img.encodeJpg(resizedImage, quality: quality));
+
+      const maxFileSize = 500 * 1024;
+      if (await tempFile.length() > maxFileSize) {
+        quality = 50;
+        await tempFile.writeAsBytes(img.encodeJpg(resizedImage, quality: quality));
+      }
+
+      if (await tempFile.length() > maxFileSize) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('圖片壓縮後仍過大，請選擇其他圖片')),
+        );
+        return null;
+      }
+
+      if (!await tempFile.exists()) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('壓縮後的圖片檔案無法保存')),
+        );
+        return null;
+      }
+
+      return tempFile;
+    } catch (e, stackTrace) {
+      debugPrint('圖片選擇或處理失敗: $e');
+      debugPrint('StackTrace: $stackTrace');
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('圖片處理失敗: $e')),
+      );
+      return null;
+    }
+  }
+
+  void _showPatientOptionsDialog(BuildContext context, Map<String, dynamic> patient) {
     showDialog(
       context: context,
-      barrierDismissible: false,
-      builder: (context) => const Center(child: CircularProgressIndicator()),
-    );
-
-    // 檢查 widget 中的控制器是否為 null
-    if (widget.usernameController == null || widget.passwordController == null) {
-      throw Exception('用戶名或密碼控制器未初始化');
-    }
-    if (widget.usernameController.text.isEmpty || widget.passwordController.text.isEmpty) {
-      throw Exception('用戶名或密碼為空');
-    }
-    if (appState.centerId == null) {
-      throw Exception('CenterID 未初始化');
-    }
-
-    // 將圖片轉為 Base64
-    final imageBytes = await imageFile.readAsBytes();
-    final base64Image = base64Encode(imageBytes);
-
-    // 構建 SQL 插入語句
-    final sanitizedPatientName = patientName.replaceAll("'", "''");
-    final sql = """
-      INSERT INTO patients (PatientName, PatientPicture, CenterID)
-      VALUES ('$sanitizedPatientName', '$base64Image', '${appState.centerId}')
-    """;
-
-    // 發送請求到後端
-    final response = await http.post(
-      Uri.parse('https://project.1114580.xyz/data'),
-      headers: {'Content-Type': 'application/json'},
-      body: jsonEncode({
-        'username': widget.usernameController.text,
-        'password': widget.passwordController.text,
-        'requestType': 'sql update',
-        'data': {'sql': sql},
-      }),
-    );
-
-    // 檢查 context 是否仍然有效
-    if (!context.mounted) {
-      debugPrint('Context is not mounted after HTTP request');
-      return;
-    }
-
-    // 關閉加載提示
-    Navigator.of(context, rootNavigator: true).pop();
-
-    if (response.statusCode == 200) {
-      // 關閉對話框
-      Navigator.of(context).pop();
-      // 刷新患者列表
-      await _fetchPatients();
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('患者新增成功')),
-      );
-    } else {
-      throw Exception('上傳失敗: HTTP ${response.statusCode}');
-    }
-  } catch (e, stackTrace) {
-    // 檢查 context 是否仍然有效
-    if (!context.mounted) {
-      debugPrint('Context is not mounted in catch block');
-      return;
-    }
-
-    // 關閉加載提示
-    Navigator.of(context, rootNavigator: true).pop();
-
-    // 記錄錯誤
-    debugPrint('患者數據上傳失敗: $e');
-    debugPrint('StackTrace: $stackTrace');
-
-    // 顯示錯誤提示
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('新增患者失敗: ${e.toString()}')),
-    );
-  }
-}
-
-
-Future<File?> _pickAndCropImage(BuildContext context) async {
-  try {
-    // 初始化 ImagePicker
-    final ImagePicker picker = ImagePicker();
-
-    // 從相簿選擇圖片
-    final XFile? pickedImage = await picker.pickImage(
-      source: ImageSource.gallery,
-      imageQuality: 50, // 壓縮圖片以減小檔案大小
-    );
-
-    // 如果用戶取消選擇，返回 null
-    if (pickedImage == null) {
-      return null;
-    }
-
-    // 檢查檔案是否存在
-    final File imageFile = File(pickedImage.path);
-    if (!await imageFile.exists()) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('選擇的圖片檔案不存在')),
-      );
-      return null;
-    }
-
-    // 檢查檔案大小（限制 5MB）
-    if (await imageFile.length() > 5 * 1024 * 1024) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('圖片檔案過大，請選擇較小的圖片')),
-      );
-      return null;
-    }
-
-    // 讀取圖片並調整尺寸為 640x640
-    final bytes = await imageFile.readAsBytes();
-    final img.Image? decodedImage = img.decodeImage(bytes);
-    if (decodedImage == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('無法解碼圖片')),
-      );
-      return null;
-    }
-
-    // 裁剪為正方形（取中心區域）
-    final int size = decodedImage.width < decodedImage.height ? decodedImage.width : decodedImage.height;
-    final img.Image croppedImage = img.copyCrop(
-      decodedImage,
-      x: (decodedImage.width - size) ~/ 2,
-      y: (decodedImage.height - size) ~/ 2,
-      width: size,
-      height: size,
-    );
-
-    // 調整尺寸為 640x640
-    final img.Image resizedImage = img.copyResize(
-      croppedImage,
-      width: 640,
-      height: 640,
-      interpolation: img.Interpolation.average,
-    );
-
-    // 保存壓縮後的圖片
-    final tempDir = await Directory.systemTemp.createTemp();
-    final tempFile = File('${tempDir.path}/resized_image.jpg');
-
-    // 初始壓縮品質設為 70
-    int quality = 70;
-    await tempFile.writeAsBytes(img.encodeJpg(resizedImage, quality: quality));
-
-    // 檢查檔案大小，若超過 500KB，降低品質
-    const maxFileSize = 500 * 1024; // 500KB
-    if (await tempFile.length() > maxFileSize) {
-      quality = 50;
-      await tempFile.writeAsBytes(img.encodeJpg(resizedImage, quality: quality));
-    }
-
-    // 驗證最終檔案大小
-    if (await tempFile.length() > maxFileSize) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('圖片壓縮後仍過大，請選擇其他圖片')),
-      );
-      return null;
-    }
-
-    // 確保檔案存在
-    if (!await tempFile.exists()) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('壓縮後的圖片檔案無法保存')),
-      );
-      return null;
-    }
-
-    return tempFile;
-  } catch (e, stackTrace) {
-    // 記錄錯誤以便除錯
-    debugPrint('圖片選擇或處理失敗: $e');
-    debugPrint('StackTrace: $stackTrace');
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('圖片處理失敗: $e')),
-    );
-    return null;
-  }
-}
-
-  Widget _buildMainContent() {
-    return Padding(
-      padding: const EdgeInsets.all(16.0),
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          DropdownButtonFormField<String>(
-            decoration: InputDecoration(
-              labelText: '選擇病患',
-              border: OutlineInputBorder(),
-            ),
-            value: selectedPatient,
-            items: appState.patientNames.map((name) {
-              return DropdownMenuItem(
-                value: name,
-                child: Text(name),
-              );
-            }).toList(),
-            onChanged: (value) {
-              setState(() {
-                selectedPatient = value;
-                final patient = appState.patients.firstWhere(
-                  (p) => p['PatientName'] == value,
-                  orElse: () => {'PatientID': null},
-                );
-                selectedPatientId = patient['PatientID']?.toString();
-              });
-              appState.setCurrentPatient(value);
-            },
-          ),
-          SizedBox(height: 20),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            alignment: WrapAlignment.center,
+      builder: (dialogContext) {
+        return AlertDialog(
+          backgroundColor: Colors.black54,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
             children: [
-              FeatureButton(
-                title: '藥物辨識檢測',
+              TextButton(
                 onPressed: () {
-                  if (selectedPatient == null) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(content: Text('請先選擇病患')),
-                    );
-                    return;
-                  }
-                  Navigator.pushNamed(context, '/medicine_recognition');
+                  Navigator.of(dialogContext).pop();
+                  _showEditPatientDialog(context, patient);
                 },
+                child: const Text(
+                  '更改',
+                  style: TextStyle(color: Colors.blue, fontSize: 18),
+                ),
               ),
-              FeatureButton(
-                title: '藥單自動鍵值',
+              TextButton(
                 onPressed: () {
-                  if (selectedPatient == null) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(content: Text('請先選擇病患')),
-                    );
-                    return;
-                  }
-                  Navigator.pushNamed(context, '/prescription_capture');
+                  Navigator.of(dialogContext).pop();
+                  _showDeletePatientDialog(context, patient);
                 },
-              ),
-              FeatureButton(
-                title: '患者資料管理',
-                onPressed: () {
-                  if (selectedPatient != null) {
-                    Navigator.pushNamed(
-                      context,
-                      '/patient_management',
-                      arguments: {
-                        'patientName': selectedPatient,
-                        'patientId': selectedPatientId,
-                      },
-                    );
-                  } else {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(content: Text('請先選擇病患')),
-                    );
-                  }
-                },
-              ),
-              FeatureButton(
-                title: '患者本身管理',
-                onPressed: () {
-                  Navigator.pushNamed(context, '/patient_self_management');
-                },
+                child: const Text(
+                  '刪除',
+                  style: TextStyle(color: Colors.red, fontSize: 18),
+                ),
               ),
             ],
           ),
-        ],
-      ),
+        );
+      },
     );
+  }
+
+  void _showEditPatientDialog(BuildContext context, Map<String, dynamic> patient) {
+    final TextEditingController nameController = TextEditingController(text: patient['PatientName']?.toString() ?? '');
+    File? selectedImage;
+
+    showDialog(
+      context: context,
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (dialogContext, setDialogState) {
+            return AlertDialog(
+              backgroundColor: Colors.black54,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              title: const Text(
+                '修改患者資料',
+                style: TextStyle(color: Colors.white),
+              ),
+              content: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    TextFormField(
+                      controller: nameController,
+                      decoration: InputDecoration(
+                        labelText: '患者姓名',
+                        labelStyle: TextStyle(color: Colors.white),
+                        enabledBorder: OutlineInputBorder(
+                          borderSide: BorderSide(color: Colors.white),
+                        ),
+                        focusedBorder: OutlineInputBorder(
+                          borderSide: BorderSide(color: Colors.blue),
+                        ),
+                      ),
+                      style: TextStyle(color: Colors.white),
+                    ),
+                    SizedBox(height: 16),
+                    ElevatedButton.icon(
+                      onPressed: () async {
+                        final pickedImage = await _pickAndCropImage(dialogContext);
+                        if (pickedImage != null && dialogContext.mounted) {
+                          setDialogState(() {
+                            selectedImage = pickedImage;
+                          });
+                        }
+                      },
+                      style: ElevatedButton.styleFrom(backgroundColor: Colors.blue[400]),
+                      icon: Icon(Icons.photo_library, color: Colors.white),
+                      label: Text(
+                        '選擇照片',
+                        style: TextStyle(color: Colors.white),
+                      ),
+                    ),
+                    SizedBox(height: 16),
+                    Container(
+                      width: 200,
+                      height: 200,
+                      decoration: BoxDecoration(
+                        border: Border.all(color: Colors.white),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: selectedImage != null
+                          ? Image.file(
+                              selectedImage!,
+                              fit: BoxFit.cover,
+                              errorBuilder: (context, error, stackTrace) => Icon(
+                                Icons.broken_image,
+                                size: 100,
+                                color: Colors.grey,
+                              ),
+                            )
+                          : _isValidBase64(patient['PatientPicture'])
+                              ? Image.memory(
+                                  base64Decode(patient['PatientPicture']),
+                                  fit: BoxFit.cover,
+                                  errorBuilder: (context, error, stackTrace) => Icon(
+                                    Icons.broken_image,
+                                    size: 100,
+                                    color: Colors.grey,
+                                  ),
+                                )
+                              : Icon(
+                                  Icons.person,
+                                  size: 100,
+                                  color: Colors.grey,
+                                ),
+                    ),
+                    SizedBox(height: 16),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                      children: [
+                        TextButton(
+                          onPressed: () {
+                            Navigator.of(dialogContext).pop();
+                          },
+                          child: Text(
+                            '離開',
+                            style: TextStyle(color: Colors.white),
+                          ),
+                        ),
+                        TextButton(
+                          onPressed: () async {
+                            if (nameController.text.isEmpty) {
+                              ScaffoldMessenger.of(dialogContext).showSnackBar(
+                                SnackBar(content: Text('請輸入患者姓名')),
+                              );
+                              return;
+                            }
+                            await _updatePatientData(
+                              dialogContext,
+                              patient['PatientID']?.toString() ?? '',
+                              nameController.text,
+                              selectedImage,
+                            );
+                          },
+                          child: Text(
+                            '確認修改',
+                            style: TextStyle(color: Colors.blue),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  void _showDeletePatientDialog(BuildContext context, Map<String, dynamic> patient) {
+    showDialog(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          backgroundColor: Colors.black54,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          title: const Text(
+            '確認刪除？',
+            style: TextStyle(color: Colors.white),
+          ),
+          content: Text(
+            '確定要刪除患者 ${patient['PatientName'] ?? '未知姓名'} 的資料嗎？',
+            style: TextStyle(color: Colors.white),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () {
+                Navigator.of(dialogContext).pop();
+              },
+              child: Text(
+                '離開',
+                style: TextStyle(color: Colors.white),
+              ),
+            ),
+            TextButton(
+              onPressed: () async {
+                await _deletePatientData(dialogContext, patient['PatientID']?.toString() ?? '');
+              },
+              child: Text(
+                '確認刪除',
+                style: TextStyle(color: Colors.red),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Future<void> _updatePatientData(
+    BuildContext context,
+    String patientId,
+    String patientName,
+    File? imageFile,
+  ) async {
+    if (!context.mounted) {
+      debugPrint('Context is not mounted, aborting update');
+      return;
+    }
+    if (patientId.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('無效的患者 ID')),
+      );
+      return;
+    }
+
+    try {
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (context) => const Center(child: CircularProgressIndicator()),
+      );
+
+      if (widget.usernameController.text.isEmpty || widget.passwordController.text.isEmpty) {
+        throw Exception('用戶名或密碼為空');
+      }
+      if (appState.centerId == null) {
+        throw Exception('CenterID 未初始化');
+      }
+
+      String? base64Image;
+      if (imageFile != null) {
+        final imageBytes = await imageFile.readAsBytes();
+        base64Image = base64Encode(imageBytes);
+      }
+
+      final sanitizedPatientName = patientName.replaceAll("'", "''");
+      final sql = base64Image != null
+          ? """
+            UPDATE patients
+            SET PatientName = '$sanitizedPatientName', PatientPicture = '$base64Image'
+            WHERE PatientID = '$patientId' AND CenterID = '${appState.centerId}'
+          """
+          : """
+            UPDATE patients
+            SET PatientName = '$sanitizedPatientName'
+            WHERE PatientID = '$patientId' AND CenterID = '${appState.centerId}'
+          """;
+
+      final response = await http.post(
+        Uri.parse('https://project.1114580.xyz/data'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'username': widget.usernameController.text,
+          'password': widget.passwordController.text,
+          'requestType': 'sql update',
+          'data': {'sql': sql},
+        }),
+      );
+
+      if (!context.mounted) {
+        debugPrint('Context is not mounted after HTTP request');
+        return;
+      }
+
+      Navigator.of(context, rootNavigator: true).pop();
+
+      if (response.statusCode == 200) {
+        Navigator.of(context).pop();
+        await _fetchPatients();
+        if (selectedPatientId == patientId) {
+          setState(() {
+            selectedPatient = patientName;
+          });
+          appState.setCurrentPatient(patientName);
+        }
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('患者資料修改成功')),
+        );
+      } else {
+        throw Exception('修改失敗: HTTP ${response.statusCode}');
+      }
+    } catch (e, stackTrace) {
+      if (!context.mounted) {
+        debugPrint('Context is not mounted in catch block');
+        return;
+      }
+      Navigator.of(context, rootNavigator: true).pop();
+      debugPrint('患者資料修改失敗: $e');
+      debugPrint('StackTrace: $stackTrace');
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('修改患者失敗: ${e.toString()}')),
+      );
+    }
+  }
+
+  Future<void> _deletePatientData(BuildContext context, String patientId) async {
+    if (!context.mounted) {
+      debugPrint('Context is not mounted, aborting delete');
+      return;
+    }
+    if (patientId.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('無效的患者 ID')),
+      );
+      return;
+    }
+
+    try {
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (context) => const Center(child: CircularProgressIndicator()),
+      );
+
+      if (widget.usernameController.text.isEmpty || widget.passwordController.text.isEmpty) {
+        throw Exception('用戶名或密碼為空');
+      }
+      if (appState.centerId == null) {
+        throw Exception('CenterID 未初始化');
+      }
+
+      final sql = """
+        DELETE FROM patients
+        WHERE PatientID = '$patientId' AND CenterID = '${appState.centerId}'
+      """;
+
+      final response = await http.post(
+        Uri.parse('https://project.1114580.xyz/data'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'username': widget.usernameController.text,
+          'password': widget.passwordController.text,
+          'requestType': 'sql update',
+          'data': {'sql': sql},
+        }),
+      );
+
+      if (!context.mounted) {
+        debugPrint('Context is not mounted after HTTP request');
+        return;
+      }
+
+      Navigator.of(context, rootNavigator: true).pop();
+
+      if (response.statusCode == 200) {
+        Navigator.of(context).pop();
+        await _fetchPatients();
+        if (selectedPatientId == patientId) {
+          setState(() {
+            selectedPatient = null;
+            selectedPatientId = null;
+          });
+          appState.setCurrentPatient(null);
+        }
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('患者資料刪除成功')),
+        );
+      } else {
+        throw Exception('刪除失敗: HTTP ${response.statusCode}');
+      }
+    } catch (e, stackTrace) {
+      if (!context.mounted) {
+        debugPrint('Context is not mounted in catch block');
+        return;
+      }
+      Navigator.of(context, rootNavigator: true).pop();
+      debugPrint('患者資料刪除失敗: $e');
+      debugPrint('StackTrace: $stackTrace');
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('刪除患者失敗: ${e.toString()}')),
+      );
+    }
   }
 
   @override
@@ -1006,7 +1278,7 @@ Future<File?> _pickAndCropImage(BuildContext context) async {
             ListTile(
               title: Text('患者資料管理'),
               onTap: () {
-                if (selectedPatient != null) {
+                if (selectedPatient != null && selectedPatientId != null) {
                   Navigator.pushNamed(
                     context,
                     '/patient_management',
@@ -1031,33 +1303,7 @@ Future<File?> _pickAndCropImage(BuildContext context) async {
           ],
         ),
       ),
-      body: IndexedStack(
-        index: _currentIndex,
-        children: [
-          _buildBlankPage(),
-          _buildMainContent(),
-        ],
-      ),
-      bottomNavigationBar: BottomNavigationBar(
-        currentIndex: _currentIndex,
-        onTap: (index) {
-          setState(() {
-            _currentIndex = index;
-          });
-        },
-        items: [
-          BottomNavigationBarItem(
-            icon: Icon(Icons.crop_free),
-            label: '空白頁面',
-          ),
-          BottomNavigationBarItem(
-            icon: Icon(Icons.home),
-            label: '主功能',
-          ),
-        ],
-        selectedItemColor: Colors.green[400],
-        unselectedItemColor: Colors.grey,
-      ),
+      body: _buildBlankPage(),
     );
   }
 }
