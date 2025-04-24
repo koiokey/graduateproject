@@ -2224,7 +2224,7 @@ class _PatientManagementScreenState extends State<PatientManagementScreen> {
           'data': {
             'sql': """
               DELETE FROM medications
-              WHERE DrugID = '$drugId' AND Added_Day = '$addedDay' AND PatientID = '$_selectedPatientId'
+              WHERE DrugID = '$drugId' AND PatientID = '$_selectedPatientId'
             """
           },
         }),
@@ -2249,173 +2249,160 @@ class _PatientManagementScreenState extends State<PatientManagementScreen> {
   }
 
   Future<void> _updateMedication({
-    required String drugId,
-    required String addedDay,
-    required String timing,
-    required String dose,
-    required String days,
-  }) async {
-    setState(() {
-      _isLoading = true;
-      _errorMessage = null;
-    });
+  required String drugId,
+  required String addedDay,
+  required String timing,
+  required String dose,
+  required String days,
+}) async {
+  setState(() {
+    _isLoading = true;
+    _errorMessage = null;
+  });
 
-    try {
-      final sanitizedTiming = timing.replaceAll("'", "''");
-      final sanitizedDose = dose.replaceAll("'", "''");
-      final sanitizedDays = days.replaceAll("'", "''");
+  try {
+    final sanitizedTiming = timing.replaceAll("'", "''");
+    final sanitizedDose = dose.replaceAll("'", "''");
+    final sanitizedDays = days.replaceAll("'", "''");
 
-      final response = await http.post(
-        Uri.parse('https://project.1114580.xyz/data'),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({
-          'username': appState.usernameController.text,
-          'password': appState.passwordController.text,
-          'requestType': 'sql update',
-          'data': {
-            'sql': """
-              UPDATE medications
-              SET Timing = '$sanitizedTiming', Dose = '$sanitizedDose', days = '$sanitizedDays'
-              WHERE DrugID = '$drugId' AND Added_Day = '$addedDay' AND PatientID = '$_selectedPatientId'
-            """
-          },
-        }),
-      );
+    // 換成yyyy-MM-dd HH:mm:ss
+    final parsedDateTime = DateTime.parse(addedDay);
+    final formattedDateTime = DateFormat('yyyy-MM-dd HH:mm:ss').format(parsedDateTime);
 
-      if (response.statusCode == 200) {
-        await _fetchMedications();
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('更新成功')),
-          );
-        }
-      } else {
-        throw Exception('更新失敗: ${response.statusCode}');
+    final payload = {
+      'username': appState.usernameController.text,
+      'password': appState.passwordController.text,
+      'requestType': 'sql update',
+      'data': {
+        'sql': """
+          UPDATE medications
+          SET Dose = '$sanitizedDose', days = '$sanitizedDays'
+          WHERE DrugID = '$drugId' 
+            AND Added_Day = '$formattedDateTime'
+            AND PatientID = '$_selectedPatientId'
+            AND Timing = '$sanitizedTiming'
+        """
+      },
+    };
+
+    print('JSON Payload: ${jsonEncode(payload)}');
+
+    final response = await http.post(
+      Uri.parse('https://project.1114580.xyz/data'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode(payload),
+    );
+
+    if (response.statusCode == 200) {
+      await _fetchMedications();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('更新成功')),
+        );
       }
-    } catch (e) {
-      setState(() {
-        _isLoading = false;
-        _errorMessage = '錯誤: $e';
-      });
+    } else {
+      throw Exception('更新失敗: ${response.statusCode}');
     }
+  } catch (e) {
+    setState(() {
+      _isLoading = false;
+      _errorMessage = '錯誤: $e';
+    });
   }
+}
 
   void _showEditDialog(Map<String, dynamic> medication) {
-    final timingController = TextEditingController(text: medication['Timing']);
-    final doseController = TextEditingController(text: medication['Dose'].toString());
-    final daysController = TextEditingController(text: medication['days'].toString());
-    String? selectedTiming = medication['Timing'];
-
-    showDialog(
-      context: context,
-      builder: (context) {
-        return AlertDialog(
-          title: const Text('編輯藥物資訊'),
-          content: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                DropdownButtonFormField<String>(
-                  value: selectedTiming,
-                  decoration: const InputDecoration(
-                    labelText: '用藥時間',
-                    border: OutlineInputBorder(),
-                  ),
-                  items: _timingOptions.where((option) => option != '全部').map((String option) {
-                    return DropdownMenuItem<String>(
-                      value: option,
-                      child: Text(option),
-                    );
-                  }).toList(),
-                  onChanged: (String? newValue) {
-                    if (newValue != null) {
-                      selectedTiming = newValue;
-                    }
-                  },
+  final doseController = TextEditingController(text: medication['Dose'].toString());
+  final daysController = TextEditingController(text: medication['days'].toString());
+  String? selectedTiming = medication['Timing'];
+  showDialog(
+    context: context,
+    builder: (context) {
+      return AlertDialog(
+        title: const Text('編輯藥物資訊'),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextFormField(
+                controller: doseController,
+                decoration: const InputDecoration(
+                  labelText: '劑量',
+                  border: OutlineInputBorder(),
                 ),
-                const SizedBox(height: 16),
-                TextFormField(
-                  controller: doseController,
-                  decoration: const InputDecoration(
-                    labelText: '劑量',
-                    border: OutlineInputBorder(),
-                  ),
-                  keyboardType: TextInputType.number,
-                  validator: (value) {
-                    if (value == null || value.isEmpty) {
-                      return '請輸入劑量';
-                    }
-                    if (int.tryParse(value) == null || int.parse(value) <= 0) {
-                      return '劑量必須為正整數';
-                    }
-                    return null;
-                  },
+                keyboardType: TextInputType.number,
+                validator: (value) {
+                  if (value == null || value.isEmpty) {
+                    return '請輸入劑量';
+                  }
+                  if (int.tryParse(value) == null || int.parse(value) <= 0) {
+                    return '劑量必須為正整數';
+                  }
+                  return null;
+                },
+              ),
+              const SizedBox(height: 16),
+              TextFormField(
+                controller: daysController,
+                decoration: const InputDecoration(
+                  labelText: '處方天數',
+                  border: OutlineInputBorder(),
                 ),
-                const SizedBox(height: 16),
-                TextFormField(
-                  controller: daysController,
-                  decoration: const InputDecoration(
-                    labelText: '處方天數',
-                    border: OutlineInputBorder(),
-                  ),
-                  keyboardType: TextInputType.number,
-                  validator: (value) {
-                    if (value == null || value.isEmpty) {
-                      return '請輸入處方天數';
-                    }
-                    if (int.tryParse(value) == null || int.parse(value) <= 0) {
-                      return '處方天數必須為正整數';
-                    }
-                    return null;
-                  },
-                ),
-              ],
-            ),
+                keyboardType: TextInputType.number,
+                validator: (value) {
+                  if (value == null || value.isEmpty) {
+                    return '請輸入處方天數';
+                  }
+                  if (int.tryParse(value) == null || int.parse(value) <= 0) {
+                    return '處方天數必須為正整數';
+                  }
+                  return null;
+                },
+              ),
+            ],
           ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(),
-              child: const Text('取消'),
-            ),
-            ElevatedButton(
-              onPressed: () async {
-                if (doseController.text.isEmpty ||
-                    daysController.text.isEmpty ||
-                    selectedTiming == null) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('請填寫所有字段')),
-                  );
-                  return;
-                }
-                if (int.tryParse(doseController.text) == null ||
-                    int.parse(doseController.text) <= 0 ||
-                    int.tryParse(daysController.text) == null ||
-                    int.parse(daysController.text) <= 0) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('劑量和處方天數必須為正整數')),
-                  );
-                  return;
-                }
-
-                Navigator.of(context).pop();
-                await _updateMedication(
-                  drugId: medication['DrugID'].toString(),
-                  addedDay: medication['Added_Day'].toString(),
-                  timing: selectedTiming!,
-                  dose: doseController.text,
-                  days: daysController.text,
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('取消'),
+          ),
+          ElevatedButton(
+            onPressed: () async {
+              if (doseController.text.isEmpty || daysController.text.isEmpty) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('請填寫所有字段')),
                 );
-                doseController.dispose();
-                daysController.dispose();
-                timingController.dispose();
-              },
-              child: const Text('保存'),
-            ),
-          ],
-        );
-      },
-    );
-  }
+                return;
+              }
+              if (int.tryParse(doseController.text) == null ||
+                  int.parse(doseController.text) <= 0 ||
+                  int.tryParse(daysController.text) == null ||
+                  int.parse(daysController.text) <= 0) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('劑量和處方天數必須為正整數')),
+                );
+                return;
+              }
+
+              Navigator.of(context).pop();
+              await _updateMedication(
+                drugId: medication['DrugID'].toString(),
+                addedDay: medication['Added_Day'].toString(),
+                timing: selectedTiming!,
+                dose: doseController.text,
+                days: daysController.text,
+              );
+              doseController.dispose();
+              daysController.dispose();
+            },
+            child: const Text('保存'),
+          ),
+        ],
+      );
+    },
+  );
+}
 
   Widget _buildMedicationCard(Map<String, dynamic> medication) {
     String formattedAddedDay;
@@ -3517,7 +3504,7 @@ class _PrescriptionResultScreenState extends State<PrescriptionResultScreen> {
         throw Exception('用藥時間無效');
       }
 
-      final validTimes = ['早餐後', '中餐後', '晚餐後'];
+      final validTimes =['早餐後', '中餐後', '晚餐後', '早餐前', '中餐前', '晚餐前', '睡前'];
       final invalidTimes = usageTimes.where((time) => !validTimes.contains(time)).toList();
       if (invalidTimes.isNotEmpty) {
         throw Exception('無效的用藥時間: ${invalidTimes.join(', ')}');
