@@ -9,6 +9,7 @@ import 'package:http/http.dart' as http; // 導入 http 套件
 import 'package:flutter/services.dart'; // 用於 Clipboard
 import 'package:flutter/foundation.dart';
 import 'package:intl/intl.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter/services.dart' show rootBundle;
 import 'package:provider/provider.dart';
 AppState appState = AppState();
@@ -232,13 +233,33 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _isLoading = true;
   List<Map<String, dynamic>> _patients = [];
   String? _errorMessage;
+ late AppState _appState; // 保存 AppState 引用
 
-   @override
+ @override
   void initState() {
     super.initState();
-    // 註冊刷新回調
-    Provider.of<AppState>(context, listen: false).setHomeRefreshCallback(_fetchPatients);
-    _fetchPatients();
+    // 使用 post-frame 回調延遲調用 _fetchPatients
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        _fetchPatients();
+      }
+    });
+  }
+@override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // 保存 AppState 引用並註冊刷新回調
+    _appState = Provider.of<AppState>(context, listen: false);
+    _appState.setHomeRefreshCallback(_fetchPatients);
+  }
+
+  @override
+  void dispose() {
+    // 使用保存的 _appState 引用清理回調，避免使用 context
+    _appState.setHomeRefreshCallback(() {
+      debugPrint('HomeScreen: Refresh callback cleared');
+    });
+    super.dispose();
   }
 
   String _getTimeOfDay() {
@@ -274,113 +295,93 @@ class _HomeScreenState extends State<HomeScreen> {
       setState(() => _isLoading = true);
     }
 
-    // 準備患者查詢
-    final patientFuture = http.post(
+    final currentDate = DateTime.now().toIso8601String().split('T')[0];
+    final timeOfDay = _getTimeOfDay();
+    String timingCondition;
+    if (timeOfDay == '早上') {
+      timingCondition = "'早餐前', '早餐後'";
+    } else if (timeOfDay == '中午') {
+      timingCondition = "'中餐前', '中餐後'";
+    } else {
+      timingCondition = "'晚餐前', '晚餐後'";
+    }
+
+    final sql = '''
+      SELECT 
+        p.PatientName,
+        p.PatientPicture,
+        p.PatientID,
+        m.state
+      FROM patients p
+      LEFT JOIN medications m ON p.PatientID = m.PatientID
+        AND DATE_ADD(m.Added_Day, INTERVAL m.days DAY) >= '$currentDate'
+        AND m.Timing IN ($timingCondition)
+      WHERE p.CenterID = '${appState.centerId}'
+    ''';
+
+    final response = await http.post(
       Uri.parse('https://project.1114580.xyz/data'),
       headers: {'Content-Type': 'application/json'},
       body: jsonEncode({
         'username': widget.usernameController.text,
         'password': widget.passwordController.text,
         'requestType': 'sql search',
-        'data': {
-          'sql': '''
-            SELECT PatientName, PatientPicture, PatientID
-            FROM patients
-            WHERE CenterID = '${appState.centerId}'
-          ''',
-        },
+        'data': {'sql': sql},
       }),
     );
 
-    // 初始化患者清單
-    final patientResponse = await patientFuture;
-    if (patientResponse.statusCode != 200) {
-      throw Exception('伺服器錯誤 (patients): ${patientResponse.statusCode}');
+    if (response.statusCode != 200) {
+      throw Exception('伺服器錯誤: ${response.statusCode}');
     }
 
-    final patientData = jsonDecode(patientResponse.body) as List<dynamic>;
-    final patients = patientData.map((item) => {
+    final data = jsonDecode(response.body) as List<dynamic>;
+    final Map<String, Map<String, dynamic>> patientMap = {};
+
+    for (var item in data) {
+      final patientId = item['PatientID']?.toString() ?? '未知ID';
+      if (!patientMap.containsKey(patientId)) {
+        patientMap[patientId] = {
           'PatientName': item['PatientName']?.toString() ?? '未知姓名',
           'PatientPicture': item['PatientPicture']?.toString(),
-          'PatientID': item['PatientID']?.toString() ?? '未知ID',
-          'statusColor': Colors.green[100], // 預設為綠色
-        }).toList();
-
-    // 如果有患者，查詢 medications 資料
-    if (patients.isNotEmpty) {
-      final patientIds = patients.map((p) => "'${p['PatientID']}'").join(',');
-      final currentDate = DateTime.now().toIso8601String().split('T')[0];
-      final timeOfDay = _getTimeOfDay();
-
-      // 根據時間段決定 Timing 條件
-      String timingCondition;
-      if (timeOfDay == '早上') {
-        timingCondition = "'早餐前', '早餐後'";
-      } else if (timeOfDay == '中午') {
-        timingCondition = "'中餐前', '中餐後'";
-      } else {
-        timingCondition = "'晚餐前', '晚餐後'";
+          'PatientID': patientId,
+          'statusColor': Colors.green[100],
+          'medications': <Map<String, dynamic>>[],
+        };
       }
-
-      // 藥物查詢
-      final medicationFuture = http.post(
-        Uri.parse('https://project.1114580.xyz/data'),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({
-          'username': widget.usernameController.text,
-          'password': widget.passwordController.text,
-          'requestType': 'sql search',
-          'data': {
-            'sql': '''
-              SELECT PatientID, state
-              FROM medications
-              WHERE PatientID IN ($patientIds)
-              AND DATE_ADD(Added_Day, INTERVAL days DAY) >= '$currentDate'
-              AND Timing IN ($timingCondition)
-            ''',
-          },
-        }),
-      );
-
-      // 並行執行藥物查詢
-      final medicationResponse = await medicationFuture;
-      if (medicationResponse.statusCode == 200) {
-        final medicationData = jsonDecode(medicationResponse.body) as List<dynamic>;
-        for (var patient in patients) {
-          final patientId = patient['PatientID'];
-          final patientMedications = medicationData.where((item) => item['PatientID'].toString() == patientId).toList();
-          Color statusColor = const Color.fromARGB(255, 178, 223, 180); // 預設為綠色
-          for (var item in patientMedications) {
-            final state = int.tryParse(item['state']?.toString() ?? '1') ?? 1;
-            if (state == 0) {
-              statusColor = const Color.fromARGB(255, 240, 207, 157); // state 為 0，橘色
-              break;
-            } else if (state == 2) {
-              statusColor = const Color.fromARGB(255, 221, 150, 145); // state 為 2，紅色
-            }
-          }
-          patient['statusColor'] = statusColor;
-          debugPrint('Patient $patientId Status Color: $statusColor');
-        }
+      if (item['state'] != null) {
+        patientMap[patientId]!['medications'].add({'state': item['state']});
       }
     }
 
-    // 按顏色排序：橘色 > 紅色 > 綠色
+    final patients = patientMap.values.toList();
+    for (var patient in patients) {
+      Color statusColor = const Color.fromARGB(255, 178, 223, 180);
+      for (var med in patient['medications']) {
+        final state = int.tryParse(med['state']?.toString() ?? '1') ?? 1;
+        if (state == 0) {
+          statusColor = const Color.fromARGB(255, 240, 207, 157);
+          break;
+        } else if (state == 2) {
+          statusColor = const Color.fromARGB(255, 221, 150, 145);
+        }
+      }
+      patient['statusColor'] = statusColor;
+      debugPrint('Patient ${patient['PatientID']} Status Color: $statusColor');
+    }
+
     patients.sort((a, b) {
       final colorA = a['statusColor'] as Color;
       final colorB = b['statusColor'] as Color;
 
-      // 定義顏色優先級
       const orange = Color.fromARGB(255, 240, 207, 157);
       const red = Color.fromARGB(255, 221, 150, 145);
       const green = Color.fromARGB(255, 178, 223, 180);
 
-      // 給每個顏色分配一個優先級分數
       int getColorPriority(Color color) {
-        if (color == orange) return 1; // 橘色優先級最高
-        if (color == red) return 2; // 紅色次之
-        if (color == green) return 3; // 綠色最低
-        return 4; // 其他顏色（若有）排在最後
+        if (color == orange) return 1;
+        if (color == red) return 2;
+        if (color == green) return 3;
+        return 4;
       }
 
       return getColorPriority(colorA).compareTo(getColorPriority(colorB));
@@ -1499,33 +1500,42 @@ class _MedicineRecognitionScreenState extends State<MedicineRecognitionScreen> {
   }
 
   Future<void> _setFocusPoint(Offset point, Size screenSize) async {
-    if (_cameraController == null || !_cameraController!.value.isInitialized) {
-      return;
-    }
+  if (_cameraController == null || !_cameraController!.value.isInitialized) {
+    return;
+  }
 
-    setState(() {
-      _focusPoint = point;
-      _isFocusing = true;
-    });
+  if (!mounted) {
+    debugPrint('PrescriptionCaptureScreen is not mounted in _setFocusPoint');
+    return;
+  }
 
-    try {
-      final double x = point.dx / screenSize.width;
-      final double y = point.dy / screenSize.height;
+  setState(() {
+    _focusPoint = point;
+    _isFocusing = true;
+  });
 
-      await _cameraController!.setFocusPoint(Offset(x, y));
-      await _cameraController!.setExposurePoint(Offset(x, y));
-      await Future.delayed(Duration(milliseconds: 500));
+  try {
+    final double x = point.dx / screenSize.width;
+    final double y = point.dy / screenSize.height;
 
+    await _cameraController!.setFocusPoint(Offset(x, y));
+    await _cameraController!.setExposurePoint(Offset(x, y));
+    await Future.delayed(Duration(milliseconds: 500));
+
+    if (mounted) {
       setState(() {
         _isFocusing = false;
       });
-    } catch (e) {
-      debugPrint('設置對焦點失敗: $e');
+    }
+  } catch (e) {
+    debugPrint('設置對焦點失敗: $e');
+    if (mounted) {
       setState(() {
         _isFocusing = false;
       });
     }
   }
+}
 
   void showLoadingDialog(BuildContext context) {
     showDialog(
@@ -2883,49 +2893,186 @@ class _PrescriptionCaptureScreenState extends State<PrescriptionCaptureScreen> {
   }
 
   Future<void> _takePicture() async {
-    if (_cameraController == null || !_cameraController!.value.isInitialized) {
+  if (_cameraController == null || !_cameraController!.value.isInitialized) {
+    if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('相機未初始化')),
       );
-      return;
     }
+    return;
+  }
 
-    if (appState.currentPatientName == null) {
+  if (appState.currentPatientName == null) {
+    if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('請先在首頁選擇病患')),
       );
+    }
+    return;
+  }
+
+  setState(() {
+    _isProcessing = true;
+  });
+
+  try {
+    final username = widget.usernameController.text;
+    final password = widget.passwordController.text;
+    debugPrint('Username: $username');
+    debugPrint('Password: $password');
+
+    if (username.isEmpty || password.isEmpty) {
+      throw Exception('用戶名或密碼為空');
+    }
+
+    await _cameraController!.setFocusMode(FocusMode.auto);
+    await _cameraController!.setFlashMode(FlashMode.off);
+
+    if (_focusPoint != null) {
+      final screenSize = MediaQuery.of(context).size;
+      await _setFocusPoint(_focusPoint!, screenSize);
+    }
+
+    await Future.delayed(Duration(milliseconds: 500));
+
+    // 顯示 Loading 畫面
+    if (mounted) {
+      showLoadingDialog(context);
+    }
+
+    final XFile picture = await _cameraController!.takePicture();
+    final bytes = await picture.readAsBytes();
+    final base64Image = base64Encode(bytes);
+
+    final requestBody = jsonEncode({
+      'username': username,
+      'password': password,
+      'requestType': 'ppocr',
+      'data': {'image': 'data:image/jpeg;base64,$base64Image'}
+    });
+    debugPrint('Request Body: $requestBody');
+
+    final response = await http.post(
+      Uri.parse('https://project.1114580.xyz/data'),
+      headers: {'Content-Type': 'application/json'},
+      body: requestBody,
+    );
+
+    debugPrint('Response Status: ${response.statusCode}');
+    debugPrint('Response Body: ${response.body}');
+
+    if (!mounted) {
+      debugPrint('PrescriptionCaptureScreen is not mounted after HTTP request');
       return;
     }
 
-    setState(() {
-      _isProcessing = true;
-    });
+    // 隱藏 Loading 畫面
+    hideLoadingDialog(context);
 
-    try {
-      final username = widget.usernameController.text;
-      final password = widget.passwordController.text;
-      debugPrint('Username: $username');
-      debugPrint('Password: $password');
-
-      if (username.isEmpty || password.isEmpty) {
-        throw Exception('用戶名或密碼為空');
+    if (response.statusCode == 200) {
+      // 驗證響應是否為有效 JSON 物件
+      try {
+        final jsonData = jsonDecode(response.body);
+        if (jsonData is String) {
+          try {
+            jsonDecode(jsonData);
+          } catch (e) {
+            throw Exception('服務器返回純文本或無效 JSON: $jsonData');
+          }
+        } else if (jsonData is! Map<String, dynamic>) {
+          throw Exception('服務器返回非物件 JSON: ${jsonData.runtimeType}');
+        }
+      } catch (e) {
+        debugPrint('Invalid JSON Response: $e');
+        throw Exception('服務器返回無效 JSON: $e');
       }
 
-      await _cameraController!.setFocusMode(FocusMode.auto);
-      await _cameraController!.setFlashMode(FlashMode.off);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('照片上傳成功')),
+      );
 
-      if (_focusPoint != null) {
-        final screenSize = MediaQuery.of(context).size;
-        await _setFocusPoint(_focusPoint!, screenSize);
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (context) => PrescriptionResultScreen(
+            jsonResponse: response.body,
+            usernameController: widget.usernameController,
+            passwordController: widget.passwordController,
+          ),
+        ),
+      );
+    } else {
+      String errorMsg = '上傳失敗: HTTP ${response.statusCode}';
+      try {
+        final errorData = jsonDecode(response.body);
+        errorMsg = errorData['error']?.toString() ?? errorMsg;
+      } catch (_) {}
+      throw Exception(errorMsg);
+    }
+  } catch (e) {
+    debugPrint('Error: $e');
+    if (mounted) {
+      hideLoadingDialog(context);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('處理失敗: $e')),
+      );
+    }
+  } finally {
+    if (mounted) {
+      setState(() {
+        _isProcessing = false;
+        _focusPoint = null;
+      });
+    }
+  }
+}
+
+Future<void> _pickImageFromGallery() async {
+  if (appState.currentPatientName == null) {
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('請先在首頁選擇病患')),
+      );
+    }
+    return;
+  }
+
+  if (_isProcessing) return;
+
+  setState(() {
+    _isProcessing = true;
+  });
+
+  try {
+    final username = widget.usernameController.text;
+    final password = widget.passwordController.text;
+    debugPrint('Username: $username');
+    debugPrint('Password: $password');
+
+    if (username.isEmpty || password.isEmpty) {
+      throw Exception('用戶名或密碼為空');
+    }
+
+    final ImagePicker picker = ImagePicker();
+    final XFile? image = await picker.pickImage(source: ImageSource.gallery);
+
+    if (image == null) {
+      if (mounted) {
+        setState(() {
+          _isProcessing = false;
+        });
       }
+      return;
+    }
 
-      await Future.delayed(Duration(milliseconds: 500));
-
-      // 顯示 Loading 畫面
+    // 顯示 Loading 畫面
+    if (mounted) {
       showLoadingDialog(context);
+    }
 
-      final XFile picture = await _cameraController!.takePicture();
-      final bytes = await picture.readAsBytes();
+    final imageFile = File(image.path);
+    if (await imageFile.exists()) {
+      final bytes = await imageFile.readAsBytes();
       final base64Image = base64Encode(bytes);
 
       final requestBody = jsonEncode({
@@ -2945,6 +3092,14 @@ class _PrescriptionCaptureScreenState extends State<PrescriptionCaptureScreen> {
       debugPrint('Response Status: ${response.statusCode}');
       debugPrint('Response Body: ${response.body}');
 
+      if (!mounted) {
+        debugPrint('PrescriptionCaptureScreen is not mounted after HTTP request');
+        return;
+      }
+
+      // 隱藏 Loading 畫面
+      hideLoadingDialog(context);
+
       if (response.statusCode == 200) {
         // 驗證響應是否為有效 JSON 物件
         try {
@@ -2962,9 +3117,6 @@ class _PrescriptionCaptureScreenState extends State<PrescriptionCaptureScreen> {
           debugPrint('Invalid JSON Response: $e');
           throw Exception('服務器返回無效 JSON: $e');
         }
-
-        // 隱藏 Loading 畫面
-        hideLoadingDialog(context);
 
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('照片上傳成功')),
@@ -2988,140 +3140,26 @@ class _PrescriptionCaptureScreenState extends State<PrescriptionCaptureScreen> {
         } catch (_) {}
         throw Exception(errorMsg);
       }
-    } catch (e) {
-      debugPrint('Error: $e');
-      // 隱藏 Loading 畫面
+    } else {
+      throw Exception('照片檔案不存在');
+    }
+  } catch (e) {
+    debugPrint('Error: $e');
+    if (mounted) {
       hideLoadingDialog(context);
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('處理失敗: $e')),
       );
-    } finally {
+    }
+  } finally {
+    if (mounted) {
       setState(() {
         _isProcessing = false;
         _focusPoint = null;
       });
     }
   }
-
-  Future<void> _pickImageFromGallery() async {
-    if (appState.currentPatientName == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('請先在首頁選擇病患')),
-      );
-      return;
-    }
-
-    if (_isProcessing) return;
-
-    setState(() {
-      _isProcessing = true;
-    });
-
-    try {
-      final username = widget.usernameController.text;
-      final password = widget.passwordController.text;
-      debugPrint('Username: $username');
-      debugPrint('Password: $password');
-
-      if (username.isEmpty || password.isEmpty) {
-        throw Exception('用戶名或密碼為空');
-      }
-
-      final ImagePicker picker = ImagePicker();
-      final XFile? image = await picker.pickImage(source: ImageSource.gallery);
-
-      if (image == null) {
-        setState(() {
-          _isProcessing = false;
-        });
-        return;
-      }
-
-      // 顯示 Loading 畫面
-      showLoadingDialog(context);
-
-      final imageFile = File(image.path);
-      if (await imageFile.exists()) {
-        final bytes = await imageFile.readAsBytes();
-        final base64Image = base64Encode(bytes);
-
-        final requestBody = jsonEncode({
-          'username': username,
-          'password': password,
-          'requestType': 'ppocr',
-          'data': {'image': 'data:image/jpeg;base64,$base64Image'}
-        });
-        debugPrint('Request Body: $requestBody');
-
-        final response = await http.post(
-          Uri.parse('https://project.1114580.xyz/data'),
-          headers: {'Content-Type': 'application/json'},
-          body: requestBody,
-        );
-
-        debugPrint('Response Status: ${response.statusCode}');
-        debugPrint('Response Body: ${response.body}');
-
-        if (response.statusCode == 200) {
-          // 驗證響應是否為有效 JSON 物件
-          try {
-            final jsonData = jsonDecode(response.body);
-            if (jsonData is String) {
-              try {
-                jsonDecode(jsonData);
-              } catch (e) {
-                throw Exception('服務器返回純文本或無效 JSON: $jsonData');
-              }
-            } else if (jsonData is! Map<String, dynamic>) {
-              throw Exception('服務器返回非物件 JSON: ${jsonData.runtimeType}');
-            }
-          } catch (e) {
-            debugPrint('Invalid JSON Response: $e');
-            throw Exception('服務器返回無效 JSON: $e');
-          }
-
-          // 隱藏 Loading 畫面
-          hideLoadingDialog(context);
-
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('照片上傳成功')),
-          );
-
-          Navigator.push(
-            context,
-            MaterialPageRoute(
-              builder: (context) => PrescriptionResultScreen(
-                jsonResponse: response.body,
-                usernameController: widget.usernameController,
-                passwordController: widget.passwordController,
-              ),
-            ),
-          );
-        } else {
-          String errorMsg = '上傳失敗: HTTP ${response.statusCode}';
-          try {
-            final errorData = jsonDecode(response.body);
-            errorMsg = errorData['error']?.toString() ?? errorMsg;
-          } catch (_) {}
-          throw Exception(errorMsg);
-        }
-      } else {
-        throw Exception('照片檔案不存在');
-      }
-    } catch (e) {
-      debugPrint('Error: $e');
-      // 隱藏 Loading 畫面
-      hideLoadingDialog(context);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('處理失敗: $e')),
-      );
-    } finally {
-      setState(() {
-        _isProcessing = false;
-        _focusPoint = null;
-      });
-    }
-  }
+}
 
   @override
   Widget build(BuildContext context) {
@@ -3766,14 +3804,7 @@ class _PrescriptionResultScreenState extends State<PrescriptionResultScreen> {
     });
   }
 
- @override
-void dispose() {
-  // 清理 AppState 的刷新回調
-  Provider.of<AppState>(context, listen: false).setHomeRefreshCallback(() {
-    debugPrint('HomeScreen: Refresh callback cleared');
-  });
-  super.dispose();
-}
+
 
   @override
   Widget build(BuildContext context) {
