@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-class AppState {
+class AppState with ChangeNotifier {
   // Singleton pattern
   static final AppState _instance = AppState._internal();
   factory AppState() => _instance;
@@ -15,8 +15,12 @@ class AppState {
   TextEditingController usernameController = TextEditingController();
   TextEditingController passwordController = TextEditingController();
   bool rememberMe = false;
-  String? _username; 
-  String? _password; 
+  String? _username;
+  String? _password;
+
+  // Callback to trigger HomeScreen refresh
+  VoidCallback? _onHomeRefresh;
+
   // Getters
   String? get centerId => _centerId;
   List<dynamic> get patients => _patients;
@@ -26,33 +30,50 @@ class AppState {
   String? get username => _username;
   String? get password => _password;
 
-   void setCredentials(String username, String password) {
+  // Setters
+  void setCredentials(String username, String password) {
     _username = username;
     _password = password;
     usernameController.text = username;
     passwordController.text = password;
+    notifyListeners();
   }
-  
-  // Setters
-  void setCenterId(String id) {
+
+  void setCenterId(String? id) {
     _centerId = id;
+    notifyListeners();
   }
 
   void setPatients(List<dynamic> patients) {
     _patients = patients;
+    notifyListeners();
   }
 
   void setCurrentPatient(String? name, String? id) {
     _currentPatientName = name;
     _currentPatientId = id;
-    debugPrint('AppState: Set current patient - Name: $name, ID: $id'); // 新增除錯輸出
+    debugPrint('AppState: Set current patient - Name: $name, ID: $id');
+    notifyListeners();
+  }
+
+  // Set the callback for HomeScreen refresh
+  void setHomeRefreshCallback(VoidCallback callback) {
+    _onHomeRefresh = callback;
+    debugPrint('AppState: Home refresh callback set');
+  }
+
+  // Trigger HomeScreen data refresh
+  void refreshHomeData() {
+    debugPrint('AppState: Triggering home data refresh');
+    _onHomeRefresh?.call();
+    notifyListeners();
   }
 
   Future<void> init() async {
     await _loadCredentials();
   }
 
-  // 載入保存的憑證
+  // Load saved credentials
   Future<void> _loadCredentials() async {
     final prefs = await SharedPreferences.getInstance();
     rememberMe = prefs.getBool('rememberMe') ?? false;
@@ -65,11 +86,12 @@ class AppState {
       _currentPatientId = prefs.getString('currentPatientId') ?? '';
       usernameController.text = _username ?? '';
       passwordController.text = _password ?? '';
-      debugPrint('AppState: Loaded credentials - PatientID: $_currentPatientId'); // 新增除錯輸出
+      debugPrint('AppState: Loaded credentials - PatientID: $_currentPatientId');
     }
+    notifyListeners();
   }
 
-  // 保存憑證
+  // Save credentials
   Future<void> saveCredentials() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool('rememberMe', rememberMe);
@@ -80,7 +102,7 @@ class AppState {
       await prefs.setString('centerId', _centerId ?? '');
       await prefs.setString('currentPatientName', _currentPatientName ?? '');
       await prefs.setString('currentPatientId', _currentPatientId ?? '');
-      debugPrint('AppState: Saved credentials - PatientID: $_currentPatientId'); // 新增除錯輸出
+      debugPrint('AppState: Saved credentials - PatientID: $_currentPatientId');
     } else {
       await prefs.remove('savedUsername');
       await prefs.remove('savedPassword');
@@ -88,9 +110,10 @@ class AppState {
       await prefs.remove('currentPatientName');
       await prefs.remove('currentPatientId');
     }
+    notifyListeners();
   }
 
-  // 清除所有狀態
+  // Clear all state
   Future<void> clearAll() async {
     _centerId = null;
     _patients = [];
@@ -100,11 +123,13 @@ class AppState {
     _password = null;
     usernameController.clear();
     passwordController.clear();
+    _onHomeRefresh = null;
 
     final prefs = await SharedPreferences.getInstance();
     await prefs.clear();
     rememberMe = false;
-    debugPrint('AppState: Cleared all state'); // 新增除錯輸出
+    debugPrint('AppState: Cleared all state');
+    notifyListeners();
   }
 }
 
