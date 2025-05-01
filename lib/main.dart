@@ -12,6 +12,8 @@ import 'package:intl/intl.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter/services.dart' show rootBundle;
 import 'package:provider/provider.dart';
+import 'utils.dart';
+
 AppState appState = AppState();
 
 void main() async {
@@ -111,7 +113,7 @@ Future<void> _login() async {
 
   try {
     // 發送驗證請求
-    final loginResponse = await http.post(
+    final loginResponse = await HttpClient.instance.post(
       Uri.parse('https://project.1114580.xyz/data'),
       headers: {'Content-Type': 'application/json'},
       body: jsonEncode(loginJsonData),
@@ -319,7 +321,7 @@ class _HomeScreenState extends State<HomeScreen> {
       WHERE p.CenterID = '${appState.centerId}'
     ''';
 
-    final response = await http.post(
+    final response = await HttpClient.instance.post(
       Uri.parse('https://project.1114580.xyz/data'),
       headers: {'Content-Type': 'application/json'},
       body: jsonEncode({
@@ -812,7 +814,7 @@ class _HomeScreenState extends State<HomeScreen> {
       VALUES ('$sanitizedPatientName', '$base64Image', '${appState.centerId}')
     """;
 
-    final response = await http.post(
+    final response = await HttpClient.instance.post(
       Uri.parse('https://project.1114580.xyz/data'),
       headers: {'Content-Type': 'application/json'},
       body: jsonEncode({
@@ -1199,7 +1201,7 @@ class _HomeScreenState extends State<HomeScreen> {
           WHERE PatientID = '$patientId' AND CenterID = '${appState.centerId}'
         """;
 
-    final response = await http.post(
+    final response = await HttpClient.instance.post(
       Uri.parse('https://project.1114580.xyz/data'),
       headers: {'Content-Type': 'application/json'},
       body: jsonEncode({
@@ -1279,7 +1281,7 @@ class _HomeScreenState extends State<HomeScreen> {
       WHERE PatientID = '$patientId' AND CenterID = '${appState.centerId}'
     """;
 
-    final response = await http.post(
+    final response = await HttpClient.instance.post(
       Uri.parse('https://project.1114580.xyz/data'),
       headers: {'Content-Type': 'application/json'},
       body: jsonEncode({
@@ -1606,7 +1608,7 @@ class _MedicineRecognitionScreenState extends State<MedicineRecognitionScreen> {
     final bytes = await picture.readAsBytes();
     final base64Image = base64Encode(bytes);
 
-    final response = await http.post(
+    final response = await HttpClient.instance.post(
       Uri.parse('https://project.1114580.xyz/data'),
       headers: {'Content-Type': 'application/json'},
       body: jsonEncode({
@@ -1714,7 +1716,7 @@ class _MedicineRecognitionScreenState extends State<MedicineRecognitionScreen> {
         'data': {'image': 'data:image/png;base64,$base64Image'},
       };
 
-      final response = await http.post(
+      final response = await HttpClient.instance.post(
         Uri.parse('https://project.1114580.xyz/data'),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode(jsonData),
@@ -1817,7 +1819,7 @@ class _MedicineRecognitionScreenState extends State<MedicineRecognitionScreen> {
       timingCondition = "AND Timing = '$timingValue'";
     }
 
-    final response = await http.post(
+    final response = await HttpClient.instance.post(
       Uri.parse('https://project.1114580.xyz/data'),
       headers: {'Content-Type': 'application/json'},
       body: jsonEncode({
@@ -2108,7 +2110,7 @@ class _JsonResultScreenState extends State<JsonResultScreen> {
       final formattedJson = const JsonEncoder.withIndent('  ').convert(jsonData);
       debugPrint('Request JSON:\n$formattedJson');
 
-      final response = await http.post(
+      final response = await HttpClient.instance.post(
         Uri.parse('https://project.1114580.xyz/data'),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode(jsonData),
@@ -2348,7 +2350,7 @@ class _PatientManagementScreenState extends State<PatientManagementScreen> {
         timingCondition = "AND m.Timing = '$sanitizedTiming'";
       }
 
-      final response = await http.post(
+      final response = await HttpClient.instance.post(
         Uri.parse('https://project.1114580.xyz/data'),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({
@@ -2402,7 +2404,7 @@ class _PatientManagementScreenState extends State<PatientManagementScreen> {
     });
 
     try {
-      final response = await http.post(
+      final response = await HttpClient.instance.post(
         Uri.parse('https://project.1114580.xyz/data'),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({
@@ -2475,7 +2477,7 @@ class _PatientManagementScreenState extends State<PatientManagementScreen> {
 
     print('JSON Payload: ${jsonEncode(payload)}');
 
-    final response = await http.post(
+    final response = await HttpClient.instance.post(
       Uri.parse('https://project.1114580.xyz/data'),
       headers: {'Content-Type': 'application/json'},
       body: jsonEncode(payload),
@@ -2952,7 +2954,7 @@ class _PrescriptionCaptureScreenState extends State<PrescriptionCaptureScreen> {
     });
     debugPrint('Request Body: $requestBody');
 
-    final response = await http.post(
+    final response = await HttpClient.instance.post(
       Uri.parse('https://project.1114580.xyz/data'),
       headers: {'Content-Type': 'application/json'},
       body: requestBody,
@@ -3083,7 +3085,7 @@ Future<void> _pickImageFromGallery() async {
       });
       debugPrint('Request Body: $requestBody');
 
-      final response = await http.post(
+      final response = await HttpClient.instance.post(
         Uri.parse('https://project.1114580.xyz/data'),
         headers: {'Content-Type': 'application/json'},
         body: requestBody,
@@ -3303,6 +3305,9 @@ class _PrescriptionResultScreenState extends State<PrescriptionResultScreen> {
   String? _errorMessage;
   bool _isSaving = false;
   ScaffoldMessengerState? _scaffoldMessenger;
+  String? _cachedUsername;
+  String? _cachedPassword;
+  final Debouncer _saveDebouncer = Debouncer(Duration(milliseconds: 500));
 
   final List<String> _usageOptions = [
     '早餐後',
@@ -3326,9 +3331,12 @@ class _PrescriptionResultScreenState extends State<PrescriptionResultScreen> {
   void initState() {
     super.initState();
     _syncAuthData();
-    _parseJsonResponse();
-    _patientNameController.text = appState.currentPatientName ?? '未選擇患者';
     _checkLoginStatus();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        _parseJsonResponse();
+      }
+    });
   }
 
   @override
@@ -3337,8 +3345,19 @@ class _PrescriptionResultScreenState extends State<PrescriptionResultScreen> {
     _scaffoldMessenger = ScaffoldMessenger.of(context);
   }
 
+  @override
+  void dispose() {
+    _saveDebouncer.cancel();
+    _patientNameController.dispose();
+    _medicationController.dispose();
+    _dosageController.dispose();
+    _appearanceController.dispose();
+    _daysController.dispose();
+    super.dispose();
+  }
+
   void _checkLoginStatus() {
-    if (appState.usernameController.text.isEmpty || appState.passwordController.text.isEmpty) {
+    if (_cachedUsername == null || _cachedPassword == null) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) {
           Navigator.pushReplacementNamed(context, '/login');
@@ -3351,11 +3370,13 @@ class _PrescriptionResultScreenState extends State<PrescriptionResultScreen> {
   }
 
   void _syncAuthData() {
-    if (appState.usernameController.text.isEmpty && widget.usernameController.text.isNotEmpty) {
-      appState.usernameController.text = widget.usernameController.text;
+    if (_cachedUsername == null && widget.usernameController.text.isNotEmpty) {
+      _cachedUsername = widget.usernameController.text;
+      appState.usernameController.text = _cachedUsername!;
     }
-    if (appState.passwordController.text.isEmpty && widget.passwordController.text.isNotEmpty) {
-      appState.passwordController.text = widget.passwordController.text;
+    if (_cachedPassword == null && widget.passwordController.text.isNotEmpty) {
+      _cachedPassword = widget.passwordController.text;
+      appState.passwordController.text = _cachedPassword!;
     }
   }
 
@@ -3371,36 +3392,27 @@ class _PrescriptionResultScreenState extends State<PrescriptionResultScreen> {
 
       String usageText = '';
       final usage = jsonData['usage'];
-      print('Raw usage from JSON: $usage');
       if (usage is List<dynamic>) {
         usageText = usage.map((e) => e?.toString() ?? '').join(',');
-      } else if (usage is Map<dynamic, dynamic>) {
-        usageText = usage.values.map((e) => e?.toString() ?? '').join(',');
       } else if (usage is String) {
         usageText = usage;
       } else if (usage != null) {
         usageText = usage.toString();
       }
 
-      final usageParts = usageText.split(',').map((e) => e.trim()).where((e) => e.isNotEmpty).toList();
-       final validTimes = ['早餐後', '中餐後', '晚餐後', '早餐前', '中餐前', '晚餐前', '睡前'];
-      final filteredParts = usageParts.where((part) => validTimes.contains(part)).toList();
-      usageText = filteredParts.join(',');
-      print('Filtered usage text: $usageText');
+      final validTimes = ['早餐後', '中餐後', '晚餐後', '早餐前', '中餐前', '晚餐前', '睡前'];
+      final usageParts = usageText
+          .split(',')
+          .map((e) => e.trim())
+          .where((e) => e.isNotEmpty && validTimes.contains(e))
+          .toList();
+      usageText = usageParts.join(',');
 
-      String? matchedOption;
-      if (_usageOptions.contains(usageText)) {
-        matchedOption = usageText;
-      } else {
-        final sortedParts = filteredParts..sort();
-        final sortedText = sortedParts.join(',');
-        if (_usageOptions.contains(sortedText)) {
-          matchedOption = sortedText;
-        }
-      }
+      String? matchedOption = _usageOptions.contains(usageText) ? usageText : null;
 
       if (mounted) {
         setState(() {
+          _patientNameController.text = appState.currentPatientName ?? '';
           _medicationController.text = jsonData['medication']?.toString() ?? '';
           _selectedUsage = matchedOption ?? _usageOptions[0];
           _dosageController.text = jsonData['dosage']?.toString() ?? '';
@@ -3410,7 +3422,6 @@ class _PrescriptionResultScreenState extends State<PrescriptionResultScreen> {
               ? 'JSON 用藥時間無效，已設置為默認值'
               : null;
         });
-        print('Selected usage after parsing: $_selectedUsage');
       }
     } catch (e) {
       if (mounted) {
@@ -3426,89 +3437,135 @@ class _PrescriptionResultScreenState extends State<PrescriptionResultScreen> {
     return input.replaceAll("'", "''").replaceAll(';', '').replaceAll('--', '');
   }
 
-  Future<bool> _verifyPatientAndDrug(String patientName, String drugName) async {
-    try {
-      final sanitizedPatientName = _sanitizeInput(patientName);
-      final sanitizedDrugName = _sanitizeInput(drugName);
+ Future<Map<String, dynamic>?> _verifyPatientAndDrug(String patientName, String drugName) async {
+  try {
+    final sanitizedPatientName = _sanitizeInput(patientName);
+    final sanitizedDrugName = _sanitizeInput(drugName);
 
-      final patientCheck = http.post(
-        Uri.parse('https://project.1114580.xyz/data'),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({
-          'username': appState.usernameController.text,
-          'password': appState.passwordController.text,
-          'requestType': 'sql search',
-          'data': {
-            'sql': "SELECT PatientID FROM patients WHERE PatientName = '$sanitizedPatientName'"
-          },
-        }),
-      );
+    // 主查詢：直接查詢 patients 和 drugs 表
+    final sql = """
+      SELECT 
+        p.PatientID AS patient_id,
+        d.DrugID AS drug_id
+      FROM patients p, drugs d
+      WHERE TRIM(LOWER(p.PatientName)) = '$sanitizedPatientName'
+      AND TRIM(LOWER(d.DrugName)) = '$sanitizedDrugName'
+    """;
 
-      final drugCheck = http.post(
-        Uri.parse('https://project.1114580.xyz/data'),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({
-          'username': appState.usernameController.text,
-          'password': appState.passwordController.text,
-          'requestType': 'sql search',
-          'data': {
-            'sql': "SELECT DrugID FROM drugs WHERE DrugName = '$sanitizedDrugName'"
-          },
-        }),
-      );
+    print('Executing SQL: $sql');
+    print('Sanitized PatientName: $sanitizedPatientName');
+    print('Sanitized DrugName: $sanitizedDrugName');
 
-      final responses = await Future.wait([patientCheck, drugCheck]);
-      final patientResponse = responses[0];
-      final drugResponse = responses[1];
+    final response = await HttpClient.instance.post(
+      Uri.parse('https://project.1114580.xyz/data'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({
+        'username': _cachedUsername,
+        'password': _cachedPassword,
+        'requestType': 'sql search',
+        'data': {'sql': sql}
+      }),
+    );
 
-      final patientData = jsonDecode(patientResponse.body);
-      final drugData = jsonDecode(drugResponse.body);
+    print('Response status: ${response.statusCode}');
+    print('Response body: ${response.body}');
 
-      return patientResponse.statusCode == 200 &&
-          drugResponse.statusCode == 200 &&
-          patientData is List &&
-          patientData.isNotEmpty &&
-          drugData is List &&
-          drugData.isNotEmpty;
-    } catch (e) {
-      return false;
-    }
-  }
-
-  Future<String?> _checkSimilarDrugName(String inputDrugName) async {
-    try {
-      final sanitizedDrugName = _sanitizeInput(inputDrugName);
-      final sql = """
-        SELECT DrugName
-        FROM drugs
-        WHERE levenshtein_enhanced(DrugName, '$sanitizedDrugName') <= 2
-        LIMIT 1
-      """;
-
-      final response = await http.post(
-        Uri.parse('https://project.1114580.xyz/data'),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({
-          'username': appState.usernameController.text,
-          'password': appState.passwordController.text,
-          'requestType': 'sql search',
-          'data': {'sql': sql}
-        }),
-      );
-
-      if (response.statusCode != 200) {
-        return null;
-      }
-
-      final responseData = jsonDecode(response.body);
-      if (responseData is List && responseData.isNotEmpty) {
-        return responseData[0]['DrugName']?.toString();
-      }
-      return null;
-    } catch (e) {
+    if (response.statusCode != 200) {
+      print('Non-200 response: ${response.statusCode}');
       return null;
     }
+
+    final data = jsonDecode(response.body);
+    print('Parsed data: $data');
+
+    // 處理可能的回應格式
+    if (data is List && data.isNotEmpty && data[0] is Map<String, dynamic>) {
+      final result = data[0];
+      if (result['patient_id'] != null && result['drug_id'] != null) {
+        return {
+          'patient_id': result['patient_id'],
+          'drug_id': result['drug_id']
+        };
+      }
+    } else if (data is Map<String, dynamic> && data['patient_id'] != null && data['drug_id'] != null) {
+      return {
+        'patient_id': data['patient_id'],
+        'drug_id': data['drug_id']
+      };
+    }
+
+    // 備用查詢：如果主查詢失敗，嘗試單獨查詢 drugs 表
+    final fallbackSql = """
+      SELECT DrugID, DrugName
+      FROM drugs
+      WHERE TRIM(LOWER(DrugName)) = '$sanitizedDrugName'
+    """;
+
+    print('Executing fallback SQL: $fallbackSql');
+
+    final fallbackResponse = await HttpClient.instance.post(
+      Uri.parse('https://project.1114580.xyz/data'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({
+        'username': _cachedUsername,
+        'password': _cachedPassword,
+        'requestType': 'sql search',
+        'data': {'sql': fallbackSql}
+      }),
+    );
+
+    print('Fallback response status: ${fallbackResponse.statusCode}');
+    print('Fallback response body: ${fallbackResponse.body}');
+
+    if (fallbackResponse.statusCode == 200) {
+      final fallbackData = jsonDecode(fallbackResponse.body);
+      print('Fallback parsed data: $fallbackData');
+      if (fallbackData is List && fallbackData.isNotEmpty) {
+        print('Found DrugName in fallback: ${fallbackData[0]['DrugName']}');
+      }
+    }
+
+    return null;
+  } catch (e, stackTrace) {
+    print('Error in _verifyPatientAndDrug: $e');
+    print('Stack trace: $stackTrace');
+    return null;
   }
+}
+
+Future<String?> _checkSimilarDrugName(String inputDrugName) async {
+  try {
+    final sanitizedDrugName = _sanitizeInput(inputDrugName);
+    final sql = """
+      SELECT DrugName
+      FROM drugs
+      WHERE levenshtein_enhanced(DrugName, '$sanitizedDrugName') <= 2
+      AND DrugName != '$sanitizedDrugName'
+      LIMIT 1
+    """;
+
+    final response = await HttpClient.instance.post(
+      Uri.parse('https://project.1114580.xyz/data'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({
+        'username': _cachedUsername,
+        'password': _cachedPassword,
+        'requestType': 'sql search',
+        'data': {'sql': sql}
+      }),
+    );
+
+    if (response.statusCode != 200) return null;
+
+    final responseData = jsonDecode(response.body);
+    if (responseData is List && responseData.isNotEmpty) {
+      return responseData[0]['DrugName']?.toString();
+    }
+    return null;
+  } catch (e) {
+    return null;
+  }
+}
 
   Future<bool> _addDrugToDatabase(String drugName) async {
     try {
@@ -3518,22 +3575,18 @@ class _PrescriptionResultScreenState extends State<PrescriptionResultScreen> {
         VALUES ('$sanitizedDrugName');
       """;
 
-      final response = await http.post(
+      final response = await HttpClient.instance.post(
         Uri.parse('https://project.1114580.xyz/data'),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({
-          'username': appState.usernameController.text,
-          'password': appState.passwordController.text,
+          'username': _cachedUsername,
+          'password': _cachedPassword,
           'requestType': 'sql update',
           'data': {'sql': sql}
         }),
       );
 
-      if (response.statusCode == 200) {
-        return true;
-      } else {
-        throw Exception('插入藥物失敗: HTTP ${response.statusCode}');
-      }
+      return response.statusCode == 200;
     } catch (e) {
       throw e;
     }
@@ -3619,11 +3672,6 @@ class _PrescriptionResultScreenState extends State<PrescriptionResultScreen> {
                       _isSaving = true;
                     });
                     try {
-                      _syncAuthData();
-                      if (appState.usernameController.text.isEmpty ||
-                          appState.passwordController.text.isEmpty) {
-                        throw Exception('認證數據無效，請重新登錄');
-                      }
                       final success = await _addDrugToDatabase(inputDrugName);
                       if (!success) {
                         throw Exception('無法將藥物名稱添加到資料庫');
@@ -3632,14 +3680,12 @@ class _PrescriptionResultScreenState extends State<PrescriptionResultScreen> {
                         setState(() {
                           _medicationController.text = inputDrugName;
                         });
-                      } else {
-                        throw Exception('頁面已關閉，無法繼續保存');
-                      }
-                      await _saveToServer(force: true);
-                      if (mounted && _scaffoldMessenger != null) {
-                        _scaffoldMessenger!.showSnackBar(
-                          SnackBar(content: Text('資料保存成功')),
-                        );
+                        await _saveToServer(force: true);
+                        if (_scaffoldMessenger != null) {
+                          _scaffoldMessenger!.showSnackBar(
+                            SnackBar(content: Text('資料保存成功')),
+                          );
+                        }
                       }
                     } catch (e) {
                       if (mounted && _scaffoldMessenger != null) {
@@ -3662,113 +3708,84 @@ class _PrescriptionResultScreenState extends State<PrescriptionResultScreen> {
     );
   }
 
-  Future<void> _saveToServer({bool force = false}) async {
-    if (_isSaving && !force) return;
-    if (!mounted) return;
+ Future<void> _saveToServer({bool force = false}) async {
+  if (_isSaving && !force) return;
+  if (!mounted) return;
 
+  setState(() {
+    _isSaving = true;
+  });
+
+  try {
+    // 驗證必要字段
     if (appState.currentPatientName == null ||
         _medicationController.text.isEmpty ||
         _selectedUsage == null ||
         _dosageController.text.isEmpty ||
         _daysController.text.isEmpty) {
-      if (mounted && _scaffoldMessenger != null) {
-        _scaffoldMessenger!.showSnackBar(
-          SnackBar(content: Text('請填寫所有必要字段')),
-        );
-      }
-      return;
+      throw Exception('請填寫所有必要字段');
     }
 
-    setState(() {
-      _isSaving = true;
-    });
+    final patientName = _sanitizeInput(appState.currentPatientName!);
+    final medication = _sanitizeInput(_medicationController.text);
+    final dose = _sanitizeInput(_dosageController.text);
+    final days = _sanitizeInput(_daysController.text);
 
-    try {
-      final username = appState.usernameController.text;
-      final password = appState.passwordController.text;
-      if (username.isEmpty || password.isEmpty) {
-        throw Exception('認證數據無效，請重新登錄');
-      }
+    // 驗證劑量和天數為數字
+    final doseNum = int.tryParse(dose);
+    final daysNum = int.tryParse(days);
+    if (doseNum == null || daysNum == null) {
+      throw Exception('劑量和處方天數必須為數字');
+    }
 
-      final patientName = _sanitizeInput(appState.currentPatientName!);
-      final medication = _sanitizeInput(_medicationController.text);
-      final dose = _sanitizeInput(_dosageController.text);
-      final days = _sanitizeInput(_daysController.text);
+    // 驗證用藥時間
+    final usageTimes = _selectedUsage!.split(',').map((e) => e.trim()).toList();
+    if (usageTimes.isEmpty) {
+      throw Exception('用藥時間無效');
+    }
 
-      final doseNum = int.tryParse(dose);
-      final daysNum = int.tryParse(days);
-      if (doseNum == null || daysNum == null) {
-        throw Exception('劑量和處方天數必須為數字');
-      }
+    final validTimes = ['早餐後', '中餐後', '晚餐後', '早餐前', '中餐前', '晚餐前', '睡前'];
+    final invalidTimes = usageTimes.where((time) => !validTimes.contains(time)).toList();
+    if (invalidTimes.isNotEmpty) {
+      throw Exception('無效的用藥時間: ${invalidTimes.join(', ')}');
+    }
 
-      final isValid = await _verifyPatientAndDrug(patientName, medication);
-      if (!isValid) {
-        final similarDrug = await _checkSimilarDrugName(medication);
-        if (similarDrug != null) {
-          if (mounted) _showSimilarDrugDialog(medication, similarDrug);
-          return;
-        } else {
-          if (mounted) _showNewDrugConfirmationDialog(medication);
-          return;
-        }
-      }
+    // 檢查患者和藥物是否存在
+    final verificationResult = await _verifyPatientAndDrug(patientName, medication);
 
-      final usageTimes = _selectedUsage!.split(',').map((e) => e.trim()).toList();
-      print('Selected usage: $_selectedUsage');
-      print('Parsed usage times: $usageTimes');
-      if (usageTimes.isEmpty) {
-        throw Exception('用藥時間無效');
-      }
+    if (verificationResult != null) {
+      // 藥物和患者存在，直接插入資料庫
+      final patientId = verificationResult['patient_id'];
+      final drugId = verificationResult['drug_id'];
 
-      final validTimes =['早餐後', '中餐後', '晚餐後', '早餐前', '中餐前', '晚餐前', '睡前'];
-      final invalidTimes = usageTimes.where((time) => !validTimes.contains(time)).toList();
-      if (invalidTimes.isNotEmpty) {
-        throw Exception('無效的用藥時間: ${invalidTimes.join(', ')}');
-      }
-
-      final requests = usageTimes.map((timing) async {
+      final sqlValues = usageTimes.map((timing) {
         final sanitizedTiming = _sanitizeInput(timing);
-        final sql = """
-          INSERT INTO medications (PatientID, DrugID, Timing, Dose, days)
-          VALUES (
-              (SELECT PatientID FROM patients WHERE PatientName = '$patientName'),
-              (SELECT DrugID FROM drugs WHERE DrugName = '$medication'),
-              '$sanitizedTiming',
-              '$dose',
-              '$days'
-          );
-        """;
+        return "('$patientId', '$drugId', '$sanitizedTiming', '$dose', '$days')";
+      }).join(',');
 
-        return http.post(
-          Uri.parse('https://project.1114580.xyz/data'),
-          headers: {'Content-Type': 'application/json'},
-          body: jsonEncode({
-            'username': username,
-            'password': password,
-            'requestType': 'sql update',
-            'data': {'sql': sql}
-          }),
-        );
-      }).toList();
+      final sql = """
+        INSERT INTO medications (PatientID, DrugID, Timing, Dose, days)
+        VALUES $sqlValues;
+      """;
 
-      final responses = await Future.wait(requests);
-      final errors = <String>[];
+      final response = await HttpClient.instance.post(
+        Uri.parse('https://project.1114580.xyz/data'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'username': _cachedUsername,
+          'password': _cachedPassword,
+          'requestType': 'sql update',
+          'data': {'sql': sql}
+        }),
+      );
 
-      for (var i = 0; i < responses.length; i++) {
-        final response = responses[i];
-        if (response.statusCode != 200) {
-          String errorMsg = '保存失敗（${usageTimes[i]}）: HTTP ${response.statusCode}';
-          try {
-            final errorData = jsonDecode(response.body);
-            errorMsg = errorData['error']?.toString() ?? errorMsg;
-          } catch (_) {}
-          print('Error response for ${usageTimes[i]}: ${response.body}');
-          errors.add(errorMsg);
-        }
-      }
-
-      if (errors.isNotEmpty) {
-        throw Exception('部分上傳失敗: ${errors.join('; ')}');
+      if (response.statusCode != 200) {
+        String errorMsg = '保存失敗: HTTP ${response.statusCode}';
+        try {
+          final errorData = jsonDecode(response.body);
+          errorMsg = errorData['error']?.toString() ?? errorMsg;
+        } catch (_) {}
+        throw Exception(errorMsg);
       }
 
       if (mounted && _scaffoldMessenger != null) {
@@ -3776,21 +3793,38 @@ class _PrescriptionResultScreenState extends State<PrescriptionResultScreen> {
           SnackBar(content: Text('資料保存成功')),
         );
         _resetForm();
-      }
-    } catch (e) {
-      if (mounted && _scaffoldMessenger != null) {
-        _scaffoldMessenger!.showSnackBar(
-          SnackBar(content: Text('錯誤: $e')),
+        Navigator.pushNamedAndRemoveUntil(
+          context,
+          '/home',
+          (route) => false,
         );
+        Provider.of<AppState>(context, listen: false).refreshHomeData();
       }
-    } finally {
+    } else {
+      // 藥物不存在，檢查是否有相似藥物
+      final similarDrug = await _checkSimilarDrugName(medication);
       if (mounted) {
-        setState(() {
-          _isSaving = false;
-        });
+        if (similarDrug != null) {
+          _showSimilarDrugDialog(medication, similarDrug);
+        } else {
+          _showNewDrugConfirmationDialog(medication);
+        }
       }
     }
+  } catch (e) {
+    if (mounted && _scaffoldMessenger != null) {
+      _scaffoldMessenger!.showSnackBar(
+        SnackBar(content: Text('錯誤: $e')),
+      );
+    }
+  } finally {
+    if (mounted) {
+      setState(() {
+        _isSaving = false;
+      });
+    }
   }
+}
 
   void _resetForm() {
     if (!mounted) return;
@@ -3803,8 +3837,6 @@ class _PrescriptionResultScreenState extends State<PrescriptionResultScreen> {
       _errorMessage = null;
     });
   }
-
-
 
   @override
   Widget build(BuildContext context) {
@@ -3906,7 +3938,9 @@ class _PrescriptionResultScreenState extends State<PrescriptionResultScreen> {
               ),
               const SizedBox(height: 24),
               ElevatedButton.icon(
-                onPressed: _isSaving ? null : _saveToServer,
+                onPressed: _isSaving
+                    ? null
+                    : () => _saveDebouncer.run(() => _saveToServer()),
                 style: ElevatedButton.styleFrom(
                   backgroundColor: Colors.green[400],
                   minimumSize: const Size(double.infinity, 50),
