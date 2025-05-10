@@ -45,7 +45,6 @@ class MyApp extends StatelessWidget {
       ),
       routes: {
         '/home': (context) => HomeScreen(
-              cameras: cameras,
               usernameController: usernameController,
               passwordController: passwordController,
             ),
@@ -88,6 +87,7 @@ class LoginScreen extends StatefulWidget {
 
 class _LoginScreenState extends State<LoginScreen> {
   bool isLoading = false;
+  String? _errorMessage;
 
   @override
   void initState() {
@@ -97,69 +97,69 @@ class _LoginScreenState extends State<LoginScreen> {
     }
   }
 
-Future<void> _login() async {
-  setState(() {
-    isLoading = true;
-  });
+  Future<void> _login() async {
+    setState(() {
+      isLoading = true;
+      _errorMessage = null; // 重置錯誤訊息
+    });
 
-  final loginJsonData = {
-    "username": widget.usernameController.text,
-    "password": widget.passwordController.text,
-    "requestType": "sql verify",
-    "data": {
-      
-    }
-  };
+    final loginJsonData = {
+      "username": widget.usernameController.text,
+      "password": widget.passwordController.text,
+      "requestType": "sql verify",
+      "data": {},
+    };
 
-  try {
-    // 發送驗證請求
-    final loginResponse = await HttpClient.instance.post(
-      Uri.parse('https://project.1114580.xyz/data'),
-      headers: {'Content-Type': 'application/json'},
-      body: jsonEncode(loginJsonData),
-    );
-
-    final loginResponseData = jsonDecode(loginResponse.body);
-
-    // 檢查回應是否為包含 CenterName 和 CenterID 的 JSON
-    if (loginResponseData is Map &&
-        loginResponseData.containsKey('CenterName') &&
-        loginResponseData.containsKey('CenterID')) {
-      final matchedCenterId = loginResponseData['CenterID']?.toString();
-      if (matchedCenterId == null) {
-        throw Exception('伺服器未提供 CenterID');
-      }
-
-      // 設置 CenterID
-      appState.setCenterId(matchedCenterId);
-
-      // 可選：儲存 CenterName（如果需要）
-      //appState.setCenterName(loginResponseData['CenterName']);
-
-      // 保存憑證
-      appState.setCredentials(
-        widget.usernameController.text,
-        widget.passwordController.text,
+    try {
+      // 發送驗證請求
+      final loginResponse = await HttpClient.instance.post(
+        Uri.parse('https://project.1114580.xyz/data'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode(loginJsonData),
       );
-      await appState.saveCredentials();
 
-      // 導航到首頁
-      Navigator.pushReplacementNamed(context, '/home');
-    } else {
-      throw Exception('帳號或密碼不正確');
+      final loginResponseData = jsonDecode(loginResponse.body);
+
+      // 檢查回應是否為包含 CenterName 和 CenterID 的 JSON
+      if (loginResponseData is Map &&
+          loginResponseData.containsKey('CenterName') &&
+          loginResponseData.containsKey('CenterID')) {
+        final matchedCenterId = loginResponseData['CenterID']?.toString();
+        final matchedCenterName = loginResponseData['CenterName']?.toString();
+        if (matchedCenterId == null) {
+          throw Exception('伺服器未提供 CenterID');
+        }
+
+        // 設置 CenterID
+        appState. setCenterData(matchedCenterId,matchedCenterName);
+
+        // 保存憑證
+        appState.setCredentials(
+          widget.usernameController.text,
+          widget.passwordController.text,
+        );
+        await appState.saveCredentials();
+
+        // 導航到首頁
+        Navigator.pushReplacementNamed(context, '/home');
+      } else {
+        throw Exception('帳號或密碼不正確');
+      }
+    } catch (e) {
+      setState(() {
+        _errorMessage = e.toString().replaceFirst('Exception: ', '');
+      });
+    } finally {
+      setState(() {
+        isLoading = false;
+      });
     }
-  } catch (e) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('錯誤: ${e.toString()}')),
-    );
-  } finally {
-    setState(() => isLoading = false);
   }
-}
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.green[100],
+      backgroundColor: Colors.green[100], // 設置背景為淺綠色
       body: Center(
         child: SingleChildScrollView(
           child: Padding(
@@ -173,34 +173,52 @@ Future<void> _login() async {
                     labelText: '帳號',
                     border: OutlineInputBorder(),
                     filled: true,
-                    fillColor: Colors.white,
+                    fillColor: Colors.white, // 輸入框背景為白色
                   ),
                 ),
-                SizedBox(height: 16),
-                TextField(
-                  controller: widget.passwordController,
-                  decoration: InputDecoration(
-                    labelText: '密碼',
-                    border: OutlineInputBorder(),
-                    filled: true,
-                    fillColor: Colors.white,
-                  ),
-                  obscureText: true,
+                const SizedBox(height: 16),
+                Stack(
+                  clipBehavior: Clip.none,
+                  children: [
+                    TextField(
+                      controller: widget.passwordController,
+                      obscureText: true,
+                      decoration: InputDecoration(
+                        labelText: '密碼',
+                        border: OutlineInputBorder(),
+                        filled: true,
+                        fillColor: Colors.white, // 輸入框背景為白色
+                      ),
+                    ),
+                    if (_errorMessage != null)
+                      Positioned(
+                        right: 0,
+                        top: 60,
+                        child: Text(
+                          _errorMessage!,
+                          style: const TextStyle(
+                            color: Colors.redAccent,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ),
+                  ],
                 ),
-                SizedBox(height: 24),
+                const SizedBox(height: 24),
                 ElevatedButton(
                   onPressed: isLoading ? null : _login,
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.green[400],
-                    padding: EdgeInsets.symmetric(horizontal: 40, vertical: 16),
+                    backgroundColor: Colors.green[400], // 按鈕背景為深綠色
+                    padding: const EdgeInsets.symmetric(horizontal: 40, vertical: 16),
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(8),
                     ),
                   ),
                   child: isLoading
-                      ? CircularProgressIndicator(color: Colors.white)
-                      : Text(
-                          '登入',
+                      ? const CircularProgressIndicator(color: Colors.white)
+                      : const Text(
+                          '登錄',
                           style: TextStyle(fontSize: 18, color: Colors.white),
                         ),
                 ),
@@ -215,201 +233,377 @@ Future<void> _login() async {
 
 //首頁
 class HomeScreen extends StatefulWidget {
-  final List<CameraDescription> cameras;
   final TextEditingController usernameController;
   final TextEditingController passwordController;
 
-  HomeScreen({
-    required this.cameras,
+  const HomeScreen({
+    super.key,
     required this.usernameController,
     required this.passwordController,
   });
 
   @override
-  _HomeScreenState createState() => _HomeScreenState();
+  State<HomeScreen> createState() => _HomeScreenState();
 }
 
 class _HomeScreenState extends State<HomeScreen> {
   String? selectedPatient;
   String? selectedPatientId;
+  String? _selectedEmployeeId; // Track selected employee
   bool _isLoading = true;
   List<Map<String, dynamic>> _patients = [];
+  List<Map<String, dynamic>> _employees = [];
+  Map<String, bool> _buttonStates = {};
   String? _errorMessage;
- late AppState _appState; // 保存 AppState 引用
+  late AppState _appState;
+  final TextEditingController _pairCodeController = TextEditingController();
+  int _currentPage = 0; // 0 for patients page, 1 for employee/journal page
 
- @override
+  @override
   void initState() {
     super.initState();
-    // 使用 post-frame 回調延遲調用 _fetchPatients
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
         _fetchPatients();
+        _fetchEmployees();
       }
     });
   }
-@override
+
+  @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    // 保存 AppState 引用並註冊刷新回調
     _appState = Provider.of<AppState>(context, listen: false);
-    _appState.setHomeRefreshCallback(_fetchPatients);
+    _appState.setHomeRefreshCallback(() async {
+      await _fetchPatients();
+      await _fetchEmployees();
+    });
   }
 
   @override
   void dispose() {
-    // 使用保存的 _appState 引用清理回調，避免使用 context
     _appState.setHomeRefreshCallback(() {
       debugPrint('HomeScreen: Refresh callback cleared');
     });
+    _pairCodeController.dispose();
     super.dispose();
   }
 
   String _getTimeOfDay() {
-  final now = DateTime.now();
-  final hour = now.hour;
-  if (hour >= 1 && hour < 11) {
-    return '早上';
-  } else if (hour >= 11 && hour < 16) {
-    return '中午';
-  } else {
-    return '晚上';
-  }
-}
-
- Future<void> _fetchPatients() async {
-  if (!mounted) {
-    debugPrint('HomeScreen is not mounted, aborting _fetchPatients');
-    return;
-  }
-
-  if (appState.centerId == null) {
-    if (mounted) {
-      setState(() {
-        _errorMessage = '未找到中心 ID';
-        _isLoading = false;
-      });
-    }
-    return;
-  }
-
-  try {
-    if (mounted) {
-      setState(() => _isLoading = true);
-    }
-
-    final currentDate = DateTime.now().toIso8601String().split('T')[0];
-    final timeOfDay = _getTimeOfDay();
-    String timingCondition;
-    if (timeOfDay == '早上') {
-      timingCondition = "'早餐前', '早餐後'";
-    } else if (timeOfDay == '中午') {
-      timingCondition = "'中餐前', '中餐後'";
+    final now = DateTime.now();
+    final hour = now.hour;
+    if (hour >= 1 && hour < 11) {
+      return '早上';
+    } else if (hour >= 11 && hour < 16) {
+      return '中午';
     } else {
-      timingCondition = "'晚餐前', '晚餐後'";
+      return '晚上';
+    }
+  }
+
+  Future<void> _fetchPatients() async {
+    if (!mounted) {
+      debugPrint('HomeScreen is not mounted, aborting _fetchPatients');
+      return;
     }
 
-    final sql = '''
-      SELECT 
-        p.PatientName,
-        p.PatientPicture,
-        p.PatientID,
-        m.state
-      FROM patients p
-      LEFT JOIN medications m ON p.PatientID = m.PatientID
-        AND DATE_ADD(m.Added_Day, INTERVAL m.days DAY) >= '$currentDate'
-        AND m.Timing IN ($timingCondition)
-      WHERE p.CenterID = '${appState.centerId}'
-    ''';
-
-    final response = await HttpClient.instance.post(
-      Uri.parse('https://project.1114580.xyz/data'),
-      headers: {'Content-Type': 'application/json'},
-      body: jsonEncode({
-        'username': widget.usernameController.text,
-        'password': widget.passwordController.text,
-        'requestType': 'sql search',
-        'data': {'sql': sql},
-      }),
-    );
-
-    if (response.statusCode != 200) {
-      throw Exception('伺服器錯誤: ${response.statusCode}');
-    }
-
-    final data = jsonDecode(response.body) as List<dynamic>;
-    final Map<String, Map<String, dynamic>> patientMap = {};
-
-    for (var item in data) {
-      final patientId = item['PatientID']?.toString() ?? '未知ID';
-      if (!patientMap.containsKey(patientId)) {
-        patientMap[patientId] = {
-          'PatientName': item['PatientName']?.toString() ?? '未知姓名',
-          'PatientPicture': item['PatientPicture']?.toString(),
-          'PatientID': patientId,
-          'statusColor': Colors.green[100],
-          'medications': <Map<String, dynamic>>[],
-        };
+    if (_appState.centerId == null) {
+      if (mounted) {
+        setState(() {
+          _errorMessage = '未找到中心 ID';
+          _isLoading = false;
+        });
       }
-      if (item['state'] != null) {
-        patientMap[patientId]!['medications'].add({'state': item['state']});
-      }
+      return;
     }
 
-    final patients = patientMap.values.toList();
-    for (var patient in patients) {
-      Color statusColor = const Color.fromARGB(255, 178, 223, 180);
-      for (var med in patient['medications']) {
-        final state = int.tryParse(med['state']?.toString() ?? '1') ?? 1;
-        if (state == 0) {
-          statusColor = const Color.fromARGB(255, 240, 207, 157);
-          break;
-        } else if (state == 2) {
-          statusColor = const Color.fromARGB(255, 221, 150, 145);
+    try {
+      if (mounted) {
+        setState(() => _isLoading = true);
+      }
+
+      final currentDate = DateTime.now().toIso8601String().split('T')[0];
+      final timeOfDay = _getTimeOfDay();
+      String timingCondition;
+      if (timeOfDay == '早上') {
+        timingCondition = "'早餐前', '早餐後'";
+      } else if (timeOfDay == '中午') {
+        timingCondition = "'中餐前', '中餐後'";
+      } else {
+        timingCondition = "'晚餐前', '晚餐後', '睡前'";
+      }
+
+      final sql = '''
+        SELECT 
+          p.PatientName,
+          p.PatientPicture,
+          p.PatientID,
+          m.state,
+          m.Timing,
+          m.Added_Day,
+          m.days
+        FROM patients p
+        LEFT JOIN medications m ON p.PatientID = m.PatientID
+          AND DATE_ADD(m.Added_Day, INTERVAL m.days DAY) >= '$currentDate'
+          AND m.Timing IN ($timingCondition)
+        WHERE p.CenterID = '${_appState.centerId}'
+      ''';
+
+      if (kDebugMode) {
+        debugPrint('Executing Patient SQL: $sql');
+      }
+
+      final response = await HttpClient.instance.post(
+        Uri.parse('https://project.1114580.xyz/data'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'username': widget.usernameController.text,
+          'password': widget.passwordController.text,
+          'requestType': 'sql search',
+          'data': {'sql': sql},
+        }),
+      );
+
+      if (kDebugMode) {
+        debugPrint('Patient Response status: ${response.statusCode}');
+        debugPrint('Patient Response body: ${response.body}');
+      }
+
+      if (response.statusCode != 200) {
+        throw Exception('伺服器錯誤: ${response.statusCode}');
+      }
+
+      final data = jsonDecode(response.body) as List<dynamic>;
+      final Map<String, Map<String, dynamic>> patientMap = {};
+
+      for (var item in data) {
+        final patientId = item['PatientID']?.toString() ?? '未知ID';
+        if (!patientMap.containsKey(patientId)) {
+          patientMap[patientId] = {
+            'PatientName': item['PatientName']?.toString() ?? '未知姓名',
+            'PatientPicture': item['PatientPicture']?.toString(),
+            'PatientID': patientId,
+            'statusColor': Colors.green[100],
+            'medications': <Map<String, dynamic>>[],
+          };
+        }
+        if (item['state'] != null && item['Timing'] != null) {
+          patientMap[patientId]!['medications'].add({
+            'state': item['state'],
+            'Timing': item['Timing'],
+            'Added_Day': item['Added_Day'],
+            'days': item['days'],
+          });
         }
       }
-      patient['statusColor'] = statusColor;
-      debugPrint('Patient ${patient['PatientID']} Status Color: $statusColor');
-    }
 
-    patients.sort((a, b) {
-      final colorA = a['statusColor'] as Color;
-      final colorB = b['statusColor'] as Color;
+      final patients = patientMap.values.toList();
+      for (var patient in patients) {
+        const orange = Color.fromARGB(255, 240, 207, 157);
+        const red = Color.fromARGB(255, 221, 150, 145);
+        const yellow = Color.fromARGB(255, 255, 196, 237);
+        const green = Color.fromARGB(255, 178, 223, 180);
 
-      const orange = Color.fromARGB(255, 240, 207, 157);
-      const red = Color.fromARGB(255, 221, 150, 145);
-      const green = Color.fromARGB(255, 178, 223, 180);
+        Color statusColor = green;
 
-      int getColorPriority(Color color) {
-        if (color == orange) return 1;
-        if (color == red) return 2;
-        if (color == green) return 3;
-        return 4;
+        if (kDebugMode) {
+          debugPrint('Processing patient ${patient['PatientID']}');
+          debugPrint('Medications: ${patient['medications']}');
+        }
+
+        if (timeOfDay == '晚上') {
+          bool hasOrange = false;
+
+          for (var med in patient['medications']) {
+            if (med['Timing'] == '晚餐前') {
+              final state = int.tryParse(med['state']?.toString() ?? '1') ?? 1;
+              if (kDebugMode) {
+                debugPrint('晚餐前 state: $state');
+              }
+              if (state == 0) {
+                statusColor = orange;
+                hasOrange = true;
+                break;
+              } else if (state == 2 && statusColor != orange) {
+                statusColor = red;
+              }
+            }
+          }
+
+          if (!hasOrange) {
+            for (var med in patient['medications']) {
+              if (med['Timing'] == '晚餐後') {
+                final state = int.tryParse(med['state']?.toString() ?? '1') ?? 1;
+                if (kDebugMode) {
+                  debugPrint('晚餐後 state: $state');
+                }
+                if (state == 0) {
+                  statusColor = orange;
+                  hasOrange = true;
+                  break;
+                } else if (state == 2 && statusColor != orange) {
+                  statusColor = red;
+                }
+              }
+            }
+          }
+
+          if (!hasOrange && statusColor != red) {
+            for (var med in patient['medications']) {
+              if (med['Timing'] == '睡前') {
+                final state = int.tryParse(med['state']?.toString() ?? '1') ?? 1;
+                if (kDebugMode) {
+                  debugPrint('睡前 state: $state');
+                }
+                if (state == 3) {
+                  statusColor = yellow;
+                }
+              }
+            }
+          }
+        } else {
+          for (var med in patient['medications']) {
+            final state = int.tryParse(med['state']?.toString() ?? '1') ?? 1;
+            if (kDebugMode) {
+              debugPrint('${med['Timing']} state: $state');
+            }
+            if (state == 0) {
+              statusColor = orange;
+              break;
+            } else if (state == 2) {
+              statusColor = red;
+            }
+          }
+        }
+
+        patient['statusColor'] = statusColor;
+        if (kDebugMode) {
+          debugPrint('Patient ${patient['PatientID']} Status Color: $statusColor');
+        }
       }
 
-      return getColorPriority(colorA).compareTo(getColorPriority(colorB));
-    });
+      patients.sort((a, b) {
+        final colorA = a['statusColor'] as Color;
+        final colorB = b['statusColor'] as Color;
 
-    if (mounted) {
-      setState(() {
-        _patients = patients;
-        _isLoading = false;
-        _errorMessage = null;
+        const orange = Color.fromARGB(255, 240, 207, 157);
+        const red = Color.fromARGB(255, 221, 150, 145);
+        const yellow = Color.fromARGB(255, 255, 196, 237);
+        const green = Color.fromARGB(255, 178, 223, 180);
+
+        int getColorPriority(Color color) {
+          if (color == orange) return 1;
+          if (color == red) return 2;
+          if (color == yellow) return 3;
+          if (color == green) return 4;
+          return 5;
+        }
+
+        return getColorPriority(colorA).compareTo(getColorPriority(colorB));
       });
-    }
-  } catch (e, stackTrace) {
-    debugPrint('Fetch patients error: $e');
-    debugPrint('StackTrace: $stackTrace');
-    if (mounted) {
-      setState(() {
-        _errorMessage = '獲取患者資料失敗: $e';
-        _isLoading = false;
-      });
+
+      if (mounted) {
+        setState(() {
+          _patients = patients;
+          _isLoading = false;
+          _errorMessage = null;
+        });
+      }
+    } catch (e, stackTrace) {
+      if (kDebugMode) {
+        debugPrint('Fetch patients error: $e');
+        debugPrint('StackTrace: $stackTrace');
+      }
+      if (mounted) {
+        setState(() {
+          _errorMessage = '獲取患者資料失敗: $e';
+          _isLoading = false;
+        });
+      }
     }
   }
-}
+
+  Future<void> _fetchEmployees() async {
+    if (!mounted) {
+      debugPrint('HomeScreen is not mounted, aborting _fetchEmployees');
+      return;
+    }
+
+    if (_appState.centerId == null) {
+      if (mounted) {
+        setState(() {
+          _employees = [];
+          _buttonStates = {};
+        });
+      }
+      return;
+    }
+
+    try {
+      final sql = '''
+        SELECT EmployeeID, EmployeeName
+        FROM employees
+        WHERE CenterID = '${_appState.centerId}' AND states = 1
+      ''';
+
+      if (kDebugMode) {
+        debugPrint('Executing Employee SQL: $sql');
+      }
+
+      final response = await HttpClient.instance.post(
+        Uri.parse('https://project.1114580.xyz/data'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'username': widget.usernameController.text,
+          'password': widget.passwordController.text,
+          'requestType': 'sql search',
+          'data': {'sql': sql},
+        }),
+      );
+
+      if (kDebugMode) {
+        debugPrint('Employee Response status: ${response.statusCode}');
+        debugPrint('Employee Response body: ${response.body}');
+      }
+
+      if (response.statusCode != 200) {
+        throw Exception('伺服器錯誤: ${response.statusCode}');
+      }
+
+      final data = jsonDecode(response.body) as List<dynamic>;
+      final List<Map<String, dynamic>> employees = data.map((item) {
+        return {
+          'EmployeeID': item['EmployeeID']?.toString() ?? '未知ID',
+          'EmployeeName': item['EmployeeName']?.toString() ?? '未知姓名',
+        };
+      }).toList();
+
+      final Map<String, bool> buttonStates = {
+        for (var employee in employees) employee['EmployeeID']: false
+      };
+
+      if (mounted) {
+        setState(() {
+          _employees = employees;
+          _buttonStates = buttonStates;
+        });
+      }
+    } catch (e, stackTrace) {
+      if (kDebugMode) {
+        debugPrint('Fetch employees error: $e');
+        debugPrint('StackTrace: $stackTrace');
+      }
+      if (mounted) {
+        setState(() {
+          _employees = [];
+          _buttonStates = {};
+        });
+      }
+    }
+  }
 
   Future<void> _logout(BuildContext context) async {
-    await appState.clearAll();
+    await _appState.clearAll();
     Navigator.pushNamedAndRemoveUntil(
       context,
       '/',
@@ -433,8 +627,8 @@ class _HomeScreenState extends State<HomeScreen> {
   void _showFunctionDialog(Map<String, dynamic> patient) {
     final patientName = patient['PatientName'] as String;
     final patientId = patient['PatientID'] as String;
-  
-  debugPrint('HomeScreen: Patient data - Name: $patientName, ID: $patientId'); // 新增：檢查 patient 資料
+
+    debugPrint('HomeScreen: Patient data - Name: $patientName, ID: $patientId');
 
     showDialog(
       context: context,
@@ -459,17 +653,17 @@ class _HomeScreenState extends State<HomeScreen> {
                     selectedPatient = patientName;
                     selectedPatientId = patientId;
                   });
-                  appState.setCurrentPatient(patientName,patientId);
+                  _appState.setCurrentPatient(patientName, patientId);
                   Navigator.pushNamed(context, '/medicine_recognition');
                 },
-                child: Text(
+                child: const Text(
                   '藥物辨識檢測',
                   style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
                   textAlign: TextAlign.center,
                 ),
               ),
             ),
-            SizedBox(height: 8),
+            const SizedBox(height: 8),
             SizedBox(
               width: 150,
               child: ElevatedButton(
@@ -486,17 +680,17 @@ class _HomeScreenState extends State<HomeScreen> {
                     selectedPatient = patientName;
                     selectedPatientId = patientId;
                   });
-                  appState.setCurrentPatient(patientName,patientId);
+                  _appState.setCurrentPatient(patientName, patientId);
                   Navigator.pushNamed(context, '/prescription_capture');
                 },
-                child: Text(
+                child: const Text(
                   '藥單自動鍵值',
                   style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
                   textAlign: TextAlign.center,
                 ),
               ),
             ),
-            SizedBox(height: 8),
+            const SizedBox(height: 8),
             SizedBox(
               width: 150,
               child: ElevatedButton(
@@ -513,7 +707,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     selectedPatient = patientName;
                     selectedPatientId = patientId;
                   });
-                  appState.setCurrentPatient(patientName,patientId);
+                  _appState.setCurrentPatient(patientName, patientId);
                   Navigator.pushNamed(
                     context,
                     '/patient_management',
@@ -523,7 +717,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     },
                   );
                 },
-                child: Text(
+                child: const Text(
                   '患者資料管理',
                   style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
                   textAlign: TextAlign.center,
@@ -535,95 +729,195 @@ class _HomeScreenState extends State<HomeScreen> {
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
-            child: Text('取消'),
+            child: const Text('取消'),
           ),
         ],
       ),
     );
   }
 
- Widget _buildPatientButton(Map<String, dynamic> patient) {
-  final patientName = patient['PatientName'] as String? ?? '未知姓名';
-  final patientPicture = patient['PatientPicture'] as String?;
-  final statusColor = patient['statusColor'] as Color;
+  Widget _buildPatientButton(Map<String, dynamic> patient) {
+    final patientName = patient['PatientName'] as String? ?? '未知姓名';
+    final patientPicture = patient['PatientPicture'] as String?;
+    final statusColor = patient['statusColor'] as Color;
 
-  return ElevatedButton(
-    style: ElevatedButton.styleFrom(
-      padding: const EdgeInsets.all(8),
-      backgroundColor: statusColor, // 使用 statusColor 作為按鈕背景顏色
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(8),
-      ),
-      elevation: 2,
-    ),
-    onPressed: () => _showFunctionDialog(patient),
-    onLongPress: () => _showPatientOptionsDialog(context, patient),
-    child: Column(
-      mainAxisAlignment: MainAxisAlignment.center,
-      children: [
-        _isValidBase64(patientPicture)
-            ? ClipRRect(
-                borderRadius: BorderRadius.circular(8),
-                child: Image.memory(
-                  base64Decode(patientPicture!),
-                  width: 60,
-                  height: 60,
-                  fit: BoxFit.cover,
-                  errorBuilder: (context, error, stackTrace) => const Icon(
-                    Icons.broken_image,
-                    size: 60,
-                    color: Colors.grey, // 修正為灰色
-                  ),
-                ),
-              )
-            : const Icon(
-                Icons.person,
-                size: 60,
-                color: Colors.grey, // 圖標使用固定灰色
-              ),
-        const SizedBox(height: 8),
-        Text(
-          patientName,
-          style: const TextStyle(
-            fontSize: 14,
-            fontWeight: FontWeight.bold,
-            color: Colors.black87,
-          ),
-          textAlign: TextAlign.center,
-          maxLines: 2,
-          overflow: TextOverflow.ellipsis,
+    return ElevatedButton(
+      style: ElevatedButton.styleFrom(
+        padding: const EdgeInsets.all(8),
+        backgroundColor: statusColor,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(8),
         ),
-      ],
-    ),
-  );
-}
-
-  Widget _buildBlankPage() {
-    return Container(
-      color: Colors.white,
+        elevation: 2,
+      ),
+      onPressed: () => _showFunctionDialog(patient),
+      onLongPress: () => _showPatientOptionsDialog(context, patient),
       child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Expanded(
-            child: _isLoading
-                ? Center(child: CircularProgressIndicator())
-                : _errorMessage != null
-                    ? Center(
-                        child: Text(
-                          _errorMessage!,
-                          style: TextStyle(color: Colors.red, fontSize: 18),
-                          textAlign: TextAlign.center,
-                        ),
-                      )
-                    : _patients.isEmpty
-                        ? Center(
-                            child: Text(
-                              '無患者資料',
-                              style: TextStyle(fontSize: 18, color: Colors.grey),
+          _isValidBase64(patientPicture)
+              ? ClipRRect(
+                  borderRadius: BorderRadius.circular(8),
+                  child: Image.memory(
+                    base64Decode(patientPicture!),
+                    width: 60,
+                    height: 60,
+                    fit: BoxFit.cover,
+                    errorBuilder: (context, error, stackTrace) => const Icon(
+                      Icons.broken_image,
+                      size: 60,
+                      color: Colors.grey,
+                    ),
+                  ),
+                )
+              : const Icon(
+                  Icons.person,
+                  size: 60,
+                  color: Colors.grey,
+                ),
+          const SizedBox(height: 8),
+          Text(
+            patientName,
+            style: const TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.bold,
+              color: Colors.black87,
+            ),
+            textAlign: TextAlign.center,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildAddPatientButton() {
+    return ElevatedButton.icon(
+      onPressed: () {
+        _showAddPatientDialog(context);
+      },
+      style: ElevatedButton.styleFrom(
+        backgroundColor: Colors.blue[400],
+        minimumSize: const Size(double.infinity, 50),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(10),
+        ),
+      ),
+      icon: const Icon(
+        Icons.add,
+        color: Colors.white,
+      ),
+      label: const Text(
+        '新增患者',
+        style: TextStyle(fontSize: 18, color: Colors.white),
+        overflow: TextOverflow.ellipsis,
+      ),
+    );
+  }
+
+ Widget _buildAddEmployeeButton() {
+    return ElevatedButton.icon(
+      onPressed: () {
+        Navigator.push(
+          context,
+          MaterialPageRoute(builder: (context) => const EmployeeManagementScreen()),
+        );
+      },
+      style: ElevatedButton.styleFrom(
+        backgroundColor: Colors.blue[400],
+        minimumSize: const Size(double.infinity, 50),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(10),
+        ),
+      ),
+      icon: const Icon(
+        Icons.person_add,
+        color: Colors.white,
+      ),
+      label: const Text(
+        '新增員工',
+        style: TextStyle(fontSize: 18, color: Colors.white),
+        overflow: TextOverflow.ellipsis,
+      ),
+    );
+  }
+
+  Widget _buildReviewJournalButton() {
+    return ElevatedButton.icon(
+      onPressed: () {
+        // Placeholder for reviewing journal functionality
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('審核日誌功能尚未實現')),
+        );
+      },
+      style: ElevatedButton.styleFrom(
+        backgroundColor: Colors.blue[400],
+        minimumSize: const Size(double.infinity, 50),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(10),
+        ),
+      ),
+      icon: const Icon(
+        Icons.book,
+        color: Colors.white,
+      ),
+      label: const Text(
+        '審核日誌',
+        style: TextStyle(fontSize: 18, color: Colors.white),
+        overflow: TextOverflow.ellipsis,
+      ),
+    );
+  }
+
+  Widget _buildPatientsPage() {
+    return Column(
+      children: [
+        Expanded(
+          child: _isLoading
+              ? const Center(child: CircularProgressIndicator())
+              : _errorMessage != null
+                  ? Center(
+                      child: Text(
+                        _errorMessage!,
+                        style: const TextStyle(color: Colors.red, fontSize: 18),
+                        textAlign: TextAlign.center,
+                      ),
+                    )
+                  : _patients.isEmpty
+                      ? RefreshIndicator(
+                          onRefresh: () async {
+                            await _fetchPatients();
+                            await _fetchEmployees();
+                          },
+                          color: Colors.blue,
+                          backgroundColor: Colors.white,
+                          child: GridView.builder(
+                            physics: const AlwaysScrollableScrollPhysics(),
+                            padding: const EdgeInsets.all(8),
+                            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                              crossAxisCount: 3,
+                              crossAxisSpacing: 8,
+                              mainAxisSpacing: 8,
+                              childAspectRatio: 1,
                             ),
-                          )
-                        : GridView.builder(
-                            padding: EdgeInsets.all(8),
-                            gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                            itemCount: 0,
+                            itemBuilder: (context, index) {
+                              return const SizedBox.shrink();
+                            },
+                          ),
+                        )
+                      : RefreshIndicator(
+                          onRefresh: () async {
+                            await _fetchPatients();
+                            await _fetchEmployees();
+                          },
+                          color: Colors.blue,
+                          backgroundColor: Colors.white,
+                          child: GridView.builder(
+                            physics: const AlwaysScrollableScrollPhysics(),
+                            padding: const EdgeInsets.all(8),
+                            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
                               crossAxisCount: 3,
                               crossAxisSpacing: 8,
                               mainAxisSpacing: 8,
@@ -634,31 +928,108 @@ class _HomeScreenState extends State<HomeScreen> {
                               return _buildPatientButton(_patients[index]);
                             },
                           ),
-          ),
-          Padding(
-            padding: const EdgeInsets.all(16.0),
-            child: ElevatedButton.icon(
-              onPressed: () {
-                _showAddPatientDialog(context);
-              },
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.blue[400],
-                minimumSize: Size(double.infinity, 50),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(10),
-                ),
-              ),
-              icon: Icon(Icons.add, color: Colors.white),
-              label: Text(
-                '新增患者',
-                style: TextStyle(fontSize: 18, color: Colors.white),
+                        ),
+        ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16.0, 16.0, 16.0, 8.0),
+          child: _buildAddPatientButton(),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildEmployeeJournalPage() {
+    return Column(
+      children: [
+        Expanded(
+          child: RefreshIndicator(
+            onRefresh: () async {
+              await _fetchEmployees();
+            },
+            color: Colors.blue,
+            backgroundColor: Colors.white,
+            child: SingleChildScrollView(
+              physics: const AlwaysScrollableScrollPhysics(),
+              padding: const EdgeInsets.all(16.0),
+              child: Column(
+                children: [
+                  _buildAddEmployeeButton(),
+                  const SizedBox(height: 16.0),
+                  _buildReviewJournalButton(),
+                ],
               ),
             ),
           ),
-        ],
-      ),
+        ),
+      ],
     );
   }
+  
+Widget _buildBlankPage() {
+  return Container(
+    color: Colors.white,
+    child: Column(
+      children: [
+        Expanded(
+          child: _currentPage == 0
+              ? _buildPatientsPage()
+              : _buildEmployeeJournalPage(),
+        ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16.0, 8.0, 16.0, 16.0),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+            children: [
+              GestureDetector(
+                onTap: () {
+                  setState(() {
+                    _currentPage = 0;
+                  });
+                },
+                child: Container(
+                  color: _currentPage == 0 ? Colors.grey[600] : Colors.grey[400],
+                  padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 20),
+                  child: Text(
+                    '患者管理',
+                    style: TextStyle(
+                      fontSize: 18,
+                      color: Colors.white,
+                    ),
+                  ),
+                ),
+              ),
+              Text(
+                '|',
+                style: TextStyle(
+                  fontSize: 18,
+                  color: Colors.white,
+                ),
+              ),
+              GestureDetector(
+                onTap: () {
+                  setState(() {
+                    _currentPage = 1;
+                  });
+                },
+                child: Container(
+                  color: _currentPage == 1 ? Colors.grey[600] : Colors.grey[400],
+                  padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 20),
+                  child: Text(
+                    '員工與日誌',
+                    style: TextStyle(
+                      fontSize: 18,
+                      color: Colors.white,
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    ),
+  );
+}
 
   void _showAddPatientDialog(BuildContext context) {
     final TextEditingController nameController = TextEditingController();
@@ -680,7 +1051,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   children: [
                     TextFormField(
                       controller: nameController,
-                      decoration: InputDecoration(
+                      decoration: const InputDecoration(
                         labelText: '患者姓名',
                         labelStyle: TextStyle(color: Colors.white),
                         enabledBorder: OutlineInputBorder(
@@ -690,9 +1061,9 @@ class _HomeScreenState extends State<HomeScreen> {
                           borderSide: BorderSide(color: Colors.blue),
                         ),
                       ),
-                      style: TextStyle(color: Colors.white),
+                      style: const TextStyle(color: Colors.white),
                     ),
-                    SizedBox(height: 16),
+                    const SizedBox(height: 16),
                     ElevatedButton.icon(
                       onPressed: () async {
                         final pickedImage = await _pickAndCropImage(dialogContext);
@@ -705,37 +1076,37 @@ class _HomeScreenState extends State<HomeScreen> {
                       style: ElevatedButton.styleFrom(
                         backgroundColor: Colors.blue[400],
                       ),
-                      icon: Icon(Icons.photo_library, color: Colors.white),
-                      label: Text(
+                      icon: const Icon(Icons.photo_library, color: Colors.white),
+                      label: const Text(
                         '選擇照片',
                         style: TextStyle(color: Colors.white),
                       ),
                     ),
-                    SizedBox(height: 16),
+                    const SizedBox(height: 16),
                     Container(
                       width: 200,
                       height: 200,
                       decoration: BoxDecoration(
-                        border: Border.all(color: Colors.white),
+                        border:Border.all(color: Colors.white),
                         borderRadius: BorderRadius.circular(8),
                       ),
                       child: selectedImage != null
                           ? Image.file(
                               selectedImage!,
                               fit: BoxFit.cover,
-                              errorBuilder: (context, error, stackTrace) => Icon(
+                              errorBuilder: (context, error, stackTrace) => const Icon(
                                 Icons.broken_image,
                                 size: 100,
                                 color: Colors.grey,
                               ),
                             )
-                          : Icon(
+                          : const Icon(
                               Icons.person,
                               size: 100,
                               color: Colors.grey,
                             ),
                     ),
-                    SizedBox(height: 16),
+                    const SizedBox(height: 16),
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                       children: [
@@ -743,7 +1114,7 @@ class _HomeScreenState extends State<HomeScreen> {
                           onPressed: () {
                             Navigator.of(dialogContext).pop();
                           },
-                          child: Text(
+                          child: const Text(
                             '離開',
                             style: TextStyle(color: Colors.white),
                           ),
@@ -752,13 +1123,13 @@ class _HomeScreenState extends State<HomeScreen> {
                           onPressed: () async {
                             if (nameController.text.isEmpty) {
                               ScaffoldMessenger.of(dialogContext).showSnackBar(
-                                SnackBar(content: Text('請輸入患者姓名')),
+                                const SnackBar(content: Text('請輸入患者姓名')),
                               );
                               return;
                             }
                             if (selectedImage == null) {
                               ScaffoldMessenger.of(dialogContext).showSnackBar(
-                                SnackBar(content: Text('請選擇患者照片')),
+                                const SnackBar(content: Text('請選擇患者照片')),
                               );
                               return;
                             }
@@ -768,7 +1139,7 @@ class _HomeScreenState extends State<HomeScreen> {
                               selectedImage!,
                             );
                           },
-                          child: Text(
+                          child: const Text(
                             '確認上傳',
                             style: TextStyle(color: Colors.blue),
                           ),
@@ -785,77 +1156,77 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
- Future<void> _uploadPatientData(BuildContext context, String patientName, File imageFile) async {
-  if (!context.mounted) {
-    debugPrint('Context is not mounted, aborting upload');
-    return;
-  }
-
-  try {
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) => const Center(child: CircularProgressIndicator()),
-    );
-
-    if (widget.usernameController.text.isEmpty || widget.passwordController.text.isEmpty) {
-      throw Exception('用戶名或密碼為空');
-    }
-    if (appState.centerId == null) {
-      throw Exception('CenterID 未初始化');
-    }
-
-    final imageBytes = await imageFile.readAsBytes();
-    final base64Image = base64Encode(imageBytes);
-
-    final sanitizedPatientName = patientName.replaceAll("'", "''");
-    final sql = """
-      INSERT INTO patients (PatientName, PatientPicture, CenterID)
-      VALUES ('$sanitizedPatientName', '$base64Image', '${appState.centerId}')
-    """;
-
-    final response = await HttpClient.instance.post(
-      Uri.parse('https://project.1114580.xyz/data'),
-      headers: {'Content-Type': 'application/json'},
-      body: jsonEncode({
-        'username': widget.usernameController.text,
-        'password': widget.passwordController.text,
-        'requestType': 'sql update',
-        'data': {'sql': sql},
-      }),
-    );
-
+  Future<void> _uploadPatientData(BuildContext context, String patientName, File imageFile) async {
     if (!context.mounted) {
-      debugPrint('Context is not mounted after HTTP request');
+      debugPrint('Context is not mounted, aborting upload');
       return;
     }
 
-    Navigator.of(context, rootNavigator: true).pop();
-
-    if (response.statusCode == 200) {
-      Navigator.of(context).pop();
-      if (mounted) {
-        await _fetchPatients();
-      }
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('患者新增成功')),
+    try {
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (context) => const Center(child: CircularProgressIndicator()),
       );
-    } else {
-      throw Exception('上傳失敗: HTTP ${response.statusCode}');
+
+      if (widget.usernameController.text.isEmpty || widget.passwordController.text.isEmpty) {
+        throw Exception('用戶名或密碼為空');
+      }
+      if (_appState.centerId == null) {
+        throw Exception('CenterID 未初始化');
+      }
+
+      final imageBytes = await imageFile.readAsBytes();
+      final base64Image = base64Encode(imageBytes);
+
+      final sanitizedPatientName = patientName.replaceAll("'", "''");
+      final sql = """
+        INSERT INTO patients (PatientName, PatientPicture, CenterID)
+        VALUES ('$sanitizedPatientName', '$base64Image', '${_appState.centerId}')
+      """;
+
+      final response = await HttpClient.instance.post(
+        Uri.parse('https://project.1114580.xyz/data'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'username': widget.usernameController.text,
+          'password': widget.passwordController.text,
+          'requestType': 'sql update',
+          'data': {'sql': sql},
+        }),
+      );
+
+      if (!context.mounted) {
+        debugPrint('Context is not mounted after HTTP request');
+        return;
+      }
+
+      Navigator.of(context, rootNavigator: true).pop();
+
+      if (response.statusCode == 200) {
+        Navigator.of(context).pop();
+        if (mounted) {
+          await _fetchPatients();
+        }
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('患者新增成功')),
+        );
+      } else {
+        throw Exception('上傳失敗: HTTP ${response.statusCode}');
+      }
+    } catch (e, stackTrace) {
+      if (!context.mounted) {
+        debugPrint('Context is not mounted in catch block');
+        return;
+      }
+      Navigator.of(context, rootNavigator: true).pop();
+      debugPrint('患者數據上傳失敗: $e');
+      debugPrint('StackTrace: $stackTrace');
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('新增患者失敗: ${e.toString()}')),
+      );
     }
-  } catch (e, stackTrace) {
-    if (!context.mounted) {
-      debugPrint('Context is not mounted in catch block');
-      return;
-    }
-    Navigator.of(context, rootNavigator: true).pop();
-    debugPrint('患者數據上傳失敗: $e');
-    debugPrint('StackTrace: $stackTrace');
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('新增患者失敗: ${e.toString()}')),
-    );
   }
-}
 
   Future<File?> _pickAndCropImage(BuildContext context) async {
     try {
@@ -871,14 +1242,14 @@ class _HomeScreenState extends State<HomeScreen> {
       final File imageFile = File(pickedImage.path);
       if (!await imageFile.exists()) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('選擇的圖片檔案不存在')),
+          const SnackBar(content: Text('選擇的圖片檔案不存在')),
         );
         return null;
       }
 
       if (await imageFile.length() > 5 * 1024 * 1024) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('圖片檔案過大，請選擇較小的圖片')),
+          const SnackBar(content: Text('圖片檔案過大，請選擇較小的圖片')),
         );
         return null;
       }
@@ -887,7 +1258,7 @@ class _HomeScreenState extends State<HomeScreen> {
       final img.Image? decodedImage = img.decodeImage(bytes);
       if (decodedImage == null) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('無法解碼圖片')),
+          const SnackBar(content: Text('無法解碼圖片')),
         );
         return null;
       }
@@ -921,14 +1292,14 @@ class _HomeScreenState extends State<HomeScreen> {
 
       if (await tempFile.length() > maxFileSize) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('圖片壓縮後仍過大，請選擇其他圖片')),
+          const SnackBar(content: Text('圖片壓縮後仍過大，請選擇其他圖片')),
         );
         return null;
       }
 
-      if (!await tempFile.exists()) {
+      if (! await tempFile.exists()) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('壓縮後的圖片檔案無法保存')),
+          const SnackBar(content: Text('壓縮後的圖片檔案無法保存')),
         );
         return null;
       }
@@ -1003,7 +1374,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   children: [
                     TextFormField(
                       controller: nameController,
-                      decoration: InputDecoration(
+                      decoration: const InputDecoration(
                         labelText: '患者姓名',
                         labelStyle: TextStyle(color: Colors.white),
                         enabledBorder: OutlineInputBorder(
@@ -1013,9 +1384,9 @@ class _HomeScreenState extends State<HomeScreen> {
                           borderSide: BorderSide(color: Colors.blue),
                         ),
                       ),
-                      style: TextStyle(color: Colors.white),
+                      style: const TextStyle(color: Colors.white),
                     ),
-                    SizedBox(height: 16),
+                    const SizedBox(height: 16),
                     ElevatedButton.icon(
                       onPressed: () async {
                         final pickedImage = await _pickAndCropImage(dialogContext);
@@ -1026,13 +1397,13 @@ class _HomeScreenState extends State<HomeScreen> {
                         }
                       },
                       style: ElevatedButton.styleFrom(backgroundColor: Colors.blue[400]),
-                      icon: Icon(Icons.photo_library, color: Colors.white),
-                      label: Text(
+                      icon: const Icon(Icons.photo_library, color: Colors.white),
+                      label: const Text(
                         '選擇照片',
                         style: TextStyle(color: Colors.white),
                       ),
                     ),
-                    SizedBox(height: 16),
+                    const SizedBox(height: 16),
                     Container(
                       width: 200,
                       height: 200,
@@ -1044,7 +1415,7 @@ class _HomeScreenState extends State<HomeScreen> {
                           ? Image.file(
                               selectedImage!,
                               fit: BoxFit.cover,
-                              errorBuilder: (context, error, stackTrace) => Icon(
+                              errorBuilder: (context, error, stackTrace) => const Icon(
                                 Icons.broken_image,
                                 size: 100,
                                 color: Colors.grey,
@@ -1054,19 +1425,19 @@ class _HomeScreenState extends State<HomeScreen> {
                               ? Image.memory(
                                   base64Decode(patient['PatientPicture']),
                                   fit: BoxFit.cover,
-                                  errorBuilder: (context, error, stackTrace) => Icon(
+                                  errorBuilder: (context, error, stackTrace) => const Icon(
                                     Icons.broken_image,
                                     size: 100,
                                     color: Colors.grey,
                                   ),
                                 )
-                              : Icon(
+                              : const Icon(
                                   Icons.person,
                                   size: 100,
                                   color: Colors.grey,
                                 ),
                     ),
-                    SizedBox(height: 16),
+                    const SizedBox(height: 16),
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                       children: [
@@ -1074,7 +1445,7 @@ class _HomeScreenState extends State<HomeScreen> {
                           onPressed: () {
                             Navigator.of(dialogContext).pop();
                           },
-                          child: Text(
+                          child: const Text(
                             '離開',
                             style: TextStyle(color: Colors.white),
                           ),
@@ -1083,7 +1454,7 @@ class _HomeScreenState extends State<HomeScreen> {
                           onPressed: () async {
                             if (nameController.text.isEmpty) {
                               ScaffoldMessenger.of(dialogContext).showSnackBar(
-                                SnackBar(content: Text('請輸入患者姓名')),
+                                const SnackBar(content: Text('請輸入患者姓名')),
                               );
                               return;
                             }
@@ -1094,7 +1465,7 @@ class _HomeScreenState extends State<HomeScreen> {
                               selectedImage,
                             );
                           },
-                          child: Text(
+                          child: const Text(
                             '確認修改',
                             style: TextStyle(color: Colors.blue),
                           ),
@@ -1124,14 +1495,14 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
           content: Text(
             '確定要刪除患者 ${patient['PatientName'] ?? '未知姓名'} 的資料嗎？',
-            style: TextStyle(color: Colors.white),
+            style: const TextStyle(color: Colors.white),
           ),
           actions: [
             TextButton(
               onPressed: () {
                 Navigator.of(dialogContext).pop();
               },
-              child: Text(
+              child: const Text(
                 '離開',
                 style: TextStyle(color: Colors.white),
               ),
@@ -1140,7 +1511,7 @@ class _HomeScreenState extends State<HomeScreen> {
               onPressed: () async {
                 await _deletePatientData(dialogContext, patient['PatientID']?.toString() ?? '');
               },
-              child: Text(
+              child: const Text(
                 '確認刪除',
                 style: TextStyle(color: Colors.red),
               ),
@@ -1152,195 +1523,195 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _updatePatientData(
-  BuildContext context,
-  String patientId,
-  String patientName,
-  File? imageFile,
-) async {
-  if (!context.mounted) {
-    debugPrint('Context is not mounted, aborting update');
-    return;
-  }
-  if (patientId.isEmpty) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('無效的患者 ID')),
-    );
-    return;
-  }
-
-  try {
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) => const Center(child: CircularProgressIndicator()),
-    );
-
-    if (widget.usernameController.text.isEmpty || widget.passwordController.text.isEmpty) {
-      throw Exception('用戶名或密碼為空');
-    }
-    if (appState.centerId == null) {
-      throw Exception('CenterID 未初始化');
-    }
-
-    String? base64Image;
-    if (imageFile != null) {
-      final imageBytes = await imageFile.readAsBytes();
-      base64Image = base64Encode(imageBytes);
-    }
-
-    final sanitizedPatientName = patientName.replaceAll("'", "''");
-    final sql = base64Image != null
-        ? """
-          UPDATE patients
-          SET PatientName = '$sanitizedPatientName', PatientPicture = '$base64Image'
-          WHERE PatientID = '$patientId' AND CenterID = '${appState.centerId}'
-        """
-        : """
-          UPDATE patients
-          SET PatientName = '$sanitizedPatientName'
-          WHERE PatientID = '$patientId' AND CenterID = '${appState.centerId}'
-        """;
-
-    final response = await HttpClient.instance.post(
-      Uri.parse('https://project.1114580.xyz/data'),
-      headers: {'Content-Type': 'application/json'},
-      body: jsonEncode({
-        'username': widget.usernameController.text,
-        'password': widget.passwordController.text,
-        'requestType': 'sql update',
-        'data': {'sql': sql},
-      }),
-    );
-
+    BuildContext context,
+    String patientId,
+    String patientName,
+    File? imageFile,
+  ) async {
     if (!context.mounted) {
-      debugPrint('Context is not mounted after HTTP request');
+      debugPrint('Context is not mounted, aborting update');
       return;
     }
-
-    Navigator.of(context, rootNavigator: true).pop();
-
-    if (response.statusCode == 200) {
-      Navigator.of(context).pop();
-      if (mounted) {
-        await _fetchPatients();
-        if (selectedPatientId == patientId) {
-          setState(() {
-            selectedPatient = patientName;
-          });
-          appState.setCurrentPatient(patientName, patientId);
-        }
-      }
+    if (patientId.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('患者資料修改成功')),
+        const SnackBar(content: Text('無效的患者 ID')),
       );
-    } else {
-      throw Exception('修改失敗: HTTP ${response.statusCode}');
-    }
-  } catch (e, stackTrace) {
-    if (!context.mounted) {
-      debugPrint('Context is not mounted in catch block');
       return;
     }
-    Navigator.of(context, rootNavigator: true).pop();
-    debugPrint('患者資料修改失敗: $e');
-    debugPrint('StackTrace: $stackTrace');
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('修改患者失敗: ${e.toString()}')),
-    );
+
+    try {
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (context) => const Center(child: CircularProgressIndicator()),
+      );
+
+      if (widget.usernameController.text.isEmpty || widget.passwordController.text.isEmpty) {
+        throw Exception('用戶名或密碼為空');
+      }
+      if (_appState.centerId == null) {
+        throw Exception('CenterID 未初始化');
+      }
+
+      String? base64Image;
+      if (imageFile != null) {
+        final imageBytes = await imageFile.readAsBytes();
+        base64Image = base64Encode(imageBytes);
+      }
+
+      final sanitizedPatientName = patientName.replaceAll("'", "''");
+      final sql = base64Image != null
+          ? """
+            UPDATE patients
+            SET PatientName = '$sanitizedPatientName', PatientPicture = '$base64Image'
+            WHERE PatientID = '$patientId' AND CenterID = '${_appState.centerId}'
+          """
+          : """
+            UPDATE patients
+            SET PatientName = '$sanitizedPatientName'
+            WHERE PatientID = '$patientId' AND CenterID = '${_appState.centerId}'
+          """;
+
+      final response = await HttpClient.instance.post(
+        Uri.parse('https://project.1114580.xyz/data'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'username': widget.usernameController.text,
+          'password': widget.passwordController.text,
+          'requestType': 'sql update',
+          'data': {'sql': sql},
+        }),
+      );
+
+      if (!context.mounted) {
+        debugPrint('Context is not mounted after HTTP request');
+        return;
+      }
+
+      Navigator.of(context, rootNavigator: true).pop();
+
+      if (response.statusCode == 200) {
+        Navigator.of(context).pop();
+        if (mounted) {
+          await _fetchPatients();
+          if (selectedPatientId == patientId) {
+            setState(() {
+              selectedPatient = patientName;
+            });
+            _appState.setCurrentPatient(patientName, patientId);
+          }
+        }
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('患者資料修改成功')),
+        );
+      } else {
+        throw Exception('修改失敗: HTTP ${response.statusCode}');
+      }
+    } catch (e, stackTrace) {
+      if (!context.mounted) {
+        debugPrint('Context is not mounted in catch block');
+        return;
+      }
+      Navigator.of(context, rootNavigator: true).pop();
+      debugPrint('患者資料修改失敗: $e');
+      debugPrint('StackTrace: $stackTrace');
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('修改患者失敗: ${e.toString()}')),
+      );
+    }
   }
-}
 
   Future<void> _deletePatientData(BuildContext context, String patientId) async {
-  if (!context.mounted) {
-    debugPrint('Context is not mounted, aborting delete');
-    return;
-  }
-  if (patientId.isEmpty) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('無效的患者 ID')),
-    );
-    return;
-  }
-
-  try {
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) => const Center(child: CircularProgressIndicator()),
-    );
-
-    if (widget.usernameController.text.isEmpty || widget.passwordController.text.isEmpty) {
-      throw Exception('用戶名或密碼為空');
-    }
-    if (appState.centerId == null) {
-      throw Exception('CenterID 未初始化');
-    }
-
-    final sql = """
-      DELETE FROM patients
-      WHERE PatientID = '$patientId' AND CenterID = '${appState.centerId}'
-    """;
-
-    final response = await HttpClient.instance.post(
-      Uri.parse('https://project.1114580.xyz/data'),
-      headers: {'Content-Type': 'application/json'},
-      body: jsonEncode({
-        'username': widget.usernameController.text,
-        'password': widget.passwordController.text,
-        'requestType': 'sql update',
-        'data': {'sql': sql},
-      }),
-    );
-
     if (!context.mounted) {
-      debugPrint('Context is not mounted after HTTP request');
+      debugPrint('Context is not mounted, aborting delete');
       return;
     }
-
-    Navigator.of(context, rootNavigator: true).pop();
-
-    if (response.statusCode == 200) {
-      Navigator.of(context).pop();
-      if (mounted) {
-        await _fetchPatients();
-        if (selectedPatientId == patientId) {
-          setState(() {
-            selectedPatient = null;
-            selectedPatientId = null;
-          });
-          appState.setCurrentPatient(null, null);
-        }
-      }
+    if (patientId.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('患者資料刪除成功')),
+        const SnackBar(content: Text('無效的患者 ID')),
       );
-    } else {
-      throw Exception('刪除失敗: HTTP ${response.statusCode}');
-    }
-  } catch (e, stackTrace) {
-    if (!context.mounted) {
-      debugPrint('Context is not mounted in catch block');
       return;
     }
-    Navigator.of(context, rootNavigator: true).pop();
-    debugPrint('患者資料刪除失敗: $e');
-    debugPrint('StackTrace: $stackTrace');
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('刪除患者失敗: ${e.toString()}')),
-    );
-  }
-}
 
-  @override
+    try {
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (context) => const Center(child: CircularProgressIndicator()),
+      );
+
+      if (widget.usernameController.text.isEmpty || widget.passwordController.text.isEmpty) {
+        throw Exception('用戶名或密碼為空');
+      }
+      if (_appState.centerId == null) {
+        throw Exception('CenterID 未初始化');
+      }
+
+      final sql = """
+        DELETE FROM patients
+        WHERE PatientID = '$patientId' AND CenterID = '${_appState.centerId}'
+      """;
+
+      final response = await HttpClient.instance.post(
+        Uri.parse('https://project.1114580.xyz/data'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'username': widget.usernameController.text,
+          'password': widget.passwordController.text,
+          'requestType': 'sql update',
+          'data': {'sql': sql},
+        }),
+      );
+
+      if (!context.mounted) {
+        debugPrint('Context is not mounted after HTTP request');
+        return;
+      }
+
+      Navigator.of(context, rootNavigator: true).pop();
+
+      if (response.statusCode == 200) {
+        Navigator.of(context).pop();
+        if (mounted) {
+          await _fetchEmployees();
+          if (selectedPatientId == patientId) {
+            setState(() {
+              selectedPatient = null;
+              selectedPatientId = null;
+            });
+            _appState.setCurrentPatient(null, null);
+          }
+        }
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('患者資料刪除成功')),
+        );
+      } else {
+        throw Exception('刪除失敗: HTTP ${response.statusCode}');
+      }
+    } catch (e, stackTrace) {
+      if (!context.mounted) {
+        debugPrint('Context is not mounted in catch block');
+        return;
+      }
+      Navigator.of(context, rootNavigator: true).pop();
+      debugPrint('患者資料刪除失敗: $e');
+      debugPrint('StackTrace: $stackTrace');
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('刪除患者失敗: ${e.toString()}')),
+      );
+    }
+  }
+
+@override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text('長照輔助系統 (ID: ${appState.centerId ?? "未登入"})'),
+        title: Text('長照輔助系統 (ID: ${_appState.centerName ?? "未登入"})'),
         backgroundColor: Colors.grey[300],
         centerTitle: true,
         actions: [
           IconButton(
-            icon: Icon(Icons.logout),
+            icon: const Icon(Icons.logout),
             onPressed: () => _logout(context),
             tooltip: '登出',
           ),
@@ -1348,59 +1719,62 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
       drawer: Drawer(
         child: ListView(
+          padding: EdgeInsets.zero,
           children: [
             DrawerHeader(
               decoration: BoxDecoration(color: Colors.grey[300]),
-              child: Text('選單', style: TextStyle(fontSize: 20)),
+              child: const Text('選單', style: TextStyle(fontSize: 20)),
             ),
-            ListTile(
-              title: Text('藥物辨識檢測'),
-              onTap: () {
-                if (selectedPatient == null) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(content: Text('請先選擇病患')),
-                  );
-                  return;
-                }
-                Navigator.pushNamed(context, '/medicine_recognition');
-              },
+            // 動態員工按鈕
+            ..._employees.map((employee) {
+              final employeeId = employee['EmployeeID'] as String;
+              final employeeName = employee['EmployeeName'] as String;
+              return ListTile(
+                title: Text('$employeeId.$employeeName'),
+                trailing: _selectedEmployeeId == employeeId
+                    ? const Icon(Icons.check_circle, color: Colors.green)
+                    : null,
+                onTap: () {
+                  setState(() {
+                    _selectedEmployeeId = employeeId;
+                    _appState.setCurrentEmployee(employeeId); // 將選擇的員工 ID 寫入 AppState
+                  });
+                },
+              );
+            }).toList(),
+            // 配對碼輸入框
+            const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+              child: Text(
+                '配對碼:',
+                style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+              ),
             ),
-            ListTile(
-              title: Text('藥單自動鍵值'),
-              onTap: () {
-                if (selectedPatient == null) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(content: Text('請先選擇病患')),
-                  );
-                  return;
-                }
-                Navigator.pushNamed(context, '/prescription_capture');
-              },
-            ),
-            ListTile(
-              title: Text('患者資料管理'),
-              onTap: () {
-                if (selectedPatient != null && selectedPatientId != null) {
-                  Navigator.pushNamed(
-                    context,
-                    '/patient_management',
-                    arguments: {
-                      'patientName': selectedPatient,
-                      'patientId': selectedPatientId,
-                    },
-                  );
-                } else {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(content: Text('請先選擇病患')),
-                  );
-                }
-              },
-            ),
-            ListTile(
-              title: Text('患者本身管理'),
-              onTap: () {
-                Navigator.pushNamed(context, '/patient_self_management');
-              },
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+              child: TextField(
+                controller: _pairCodeController,
+                decoration: const InputDecoration(
+                  hintText: '輸入配對碼',
+                  border: OutlineInputBorder(),
+                  filled: true,
+                  fillColor: Colors.white,
+                ),
+                onSubmitted: (value) {
+                  // 當按下 Enter 鍵時，將配對碼保存到 AppState
+                  if (value.isNotEmpty) {
+                    _appState.setPairCode(value);
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(content: Text('配對碼已保存: $value')),
+                    );
+                  } else {
+                    _appState.setPairCode(null);
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('配對碼已清除')),
+                    );
+                  }
+                },
+              ),
             ),
           ],
         ),
@@ -1409,6 +1783,7 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 }
+
 //藥丸
 class MedicineRecognitionScreen extends StatefulWidget {
   final List<CameraDescription> cameras;
@@ -1858,7 +2233,7 @@ class _MedicineRecognitionScreenState extends State<MedicineRecognitionScreen> {
           _patientMedications = responseData
               .map((item) => {
                     'drugName': item['DrugName']?.toString().toLowerCase().trim() ?? '',
-                    'dose': int.tryParse(item['Dose']?.toString() ?? '0') ?? 0,
+                    'dose': double.tryParse(item['Dose']?.toString() ?? '0') ?? 0,
                   })
               .where((med) => med['drugName'] is String && (med['drugName'] as String).isNotEmpty)
               .toList();
@@ -1888,7 +2263,7 @@ class _MedicineRecognitionScreenState extends State<MedicineRecognitionScreen> {
 
     final patientMedMap = {
       for (var med in _patientMedications)
-        med['drugName'] as String: med['dose'] as int
+        med['drugName'] as String: med['dose'] as double
     };
 
     setState(() {
@@ -1907,10 +2282,10 @@ class _MedicineRecognitionScreenState extends State<MedicineRecognitionScreen> {
             final missingCount = expectedDose - detectedCount;
             return {
               'drugName': drugName,
-              'missingCount': missingCount > 0 ? missingCount : 0,
+              'missingCount': missingCount > 0.0 ? missingCount : 0.0,
             };
           })
-          .where((med) => (med['missingCount'] as int) > 0)
+          .where((med) => (med['missingCount'] as double) > 0)
           .toList();
     });
   }
@@ -2080,68 +2455,108 @@ class JsonResultScreen extends StatefulWidget {
 class _JsonResultScreenState extends State<JsonResultScreen> {
   bool _isUpdating = false;
 
- Future<void> _confirmMedications() async {
-    if (_isUpdating) return;
+Future<void> _confirmMedications() async {
+  if (_isUpdating) return;
 
-    setState(() => _isUpdating = true);
-    try {
-      final patientId = appState.currentPatientId;
-      if (patientId == null) {
-        throw Exception('未選擇患者');
-      }
-
-      final currentDate = DateTime.now().toIso8601String().split('T')[0];
-
-      final sql = '''
-        UPDATE medications
-        SET state = 1
-        WHERE PatientID = '$patientId'
-        AND DATE_ADD(Added_Day, INTERVAL days DAY) >= '$currentDate'
-        AND Timing = '${widget.timing}'
-      ''';
-
-      final jsonData = {
-        'username': appState.usernameController.text,
-        'password': appState.passwordController.text,
-        'requestType': 'sql update',
-        'data': {'sql': sql},
-      };
-
-      final formattedJson = const JsonEncoder.withIndent('  ').convert(jsonData);
-      debugPrint('Request JSON:\n$formattedJson');
-
-      final response = await HttpClient.instance.post(
-        Uri.parse('https://project.1114580.xyz/data'),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode(jsonData),
-      );
-
-      debugPrint('HTTP Response Status Code: ${response.statusCode}');
-      debugPrint('HTTP Response Body: ${response.body}');
-
-      if (response.statusCode == 200) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('藥物狀態更新成功')),
-        );
-        // 導航到首頁並清除導航堆棧
-        Navigator.pushNamedAndRemoveUntil(
-          context,
-          '/home',
-          (route) => false,
-        );
-        // 觸發首頁資料刷新
-        Provider.of<AppState>(context, listen: false).refreshHomeData();
-      } else {
-        throw Exception('更新失敗: HTTP ${response.statusCode}');
-      }
-    } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('更新失敗: $e')),
-      );
-    } finally {
-      setState(() => _isUpdating = false);
+  setState(() => _isUpdating = true);
+  try {
+    final patientId = appState.currentPatientId;
+    if (patientId == null) {
+      throw Exception('未選擇患者');
     }
+
+    final employeeId = appState.currentEmployeeId;
+    if (employeeId == null) {
+      throw Exception('未選擇員工');
+    }
+
+    final currentDate = DateTime.now().toIso8601String().split('T')[0];
+
+    // 第一個 SQL：更新藥物狀態
+    final updateSql = '''
+      UPDATE medications
+      SET state = 1
+      WHERE PatientID = '$patientId'
+      AND DATE_ADD(Added_Day, INTERVAL days DAY) >= '$currentDate'
+      AND Timing = '${widget.timing}'
+    ''';
+
+    final updateJsonData = {
+      'username': appState.usernameController.text,
+      'password': appState.passwordController.text,
+      'requestType': 'sql update',
+      'data': {'sql': updateSql},
+    };
+
+    final formattedUpdateJson = const JsonEncoder.withIndent('  ').convert(updateJsonData);
+    debugPrint('Update Request JSON:\n$formattedUpdateJson');
+
+    final updateResponse = await HttpClient.instance.post(
+      Uri.parse('https://project.1114580.xyz/data'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode(updateJsonData),
+    );
+
+    debugPrint('Update HTTP Response Status Code: ${updateResponse.statusCode}');
+    debugPrint('Update HTTP Response Body: ${updateResponse.body}');
+
+    if (updateResponse.statusCode != 200) {
+      throw Exception('更新藥物狀態失敗: HTTP ${updateResponse.statusCode}, 訊息: ${updateResponse.body}');
+    }
+
+    // 第二個 SQL：插入記錄
+    final insertSql = '''
+      INSERT INTO records (EmployeeID, PatientID, Type, EntryDatetime, DescribeMean)
+      VALUES (
+        '$employeeId',
+        '$patientId',
+        'yolo',
+        NOW(),
+        '以檢查${widget.timing}要吃的部分'
+      )
+    ''';
+
+    final insertJsonData = {
+      'username': appState.usernameController.text,
+      'password': appState.passwordController.text,
+      'requestType': 'sql update',
+      'data': {'sql': insertSql},
+    };
+
+    final formattedInsertJson = const JsonEncoder.withIndent('  ').convert(insertJsonData);
+    debugPrint('Insert Request JSON:\n$formattedInsertJson');
+
+    final insertResponse = await HttpClient.instance.post(
+      Uri.parse('https://project.1114580.xyz/data'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode(insertJsonData),
+    );
+
+    debugPrint('Insert HTTP Response Status Code: ${insertResponse.statusCode}');
+    debugPrint('Insert HTTP Response Body: ${insertResponse.body}');
+
+    if (insertResponse.statusCode != 200) {
+      throw Exception('插入記錄失敗: HTTP ${insertResponse.statusCode}, 訊息: ${insertResponse.body}');
+    }
+
+    // 兩者都成功後顯示成功訊息並導航
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('藥物狀態更新成功')),
+    );
+    Navigator.pushNamedAndRemoveUntil(
+      context,
+      '/home',
+      (route) => false,
+    );
+    Provider.of<AppState>(context, listen: false).refreshHomeData();
+  } catch (e) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('更新失敗: $e')),
+    );
+  } finally {
+    setState(() => _isUpdating = false);
   }
+}
 
   @override
   Widget build(BuildContext context) {
@@ -2192,13 +2607,26 @@ class _JsonResultScreenState extends State<JsonResultScreen> {
         }));
 
     // Add patient medications that are not in missing medications
-    combinedMedications.addAll(widget.patientMedications
+      combinedMedications.addAll(widget.patientMedications
         .where((med) => !missingDrugNames.contains(med['drugName']?.toString()))
-        .map((med) => {
-              'drugName': med['drugName'],
-              'dose': med['dose'],
-              'isMissing': false,
-            }));
+        .map((med) {
+      // Parse dose as double
+      double? dose;
+      final rawDose = med['dose'];
+      if (rawDose is num) {
+        dose = rawDose.toDouble();
+      }
+      // Format dose for display
+      final formattedDose = dose != null
+          ? (dose == dose.floorToDouble() ? dose.toDouble().toString() : dose.toStringAsFixed(2))
+          : '未知';
+      return {
+        'drugName': med['drugName'],
+        'dose': formattedDose,
+        'rawDose': dose, // Store raw double value if needed
+        'isMissing': false,
+      };
+    }));
 
     return Column(
       children: [
@@ -2281,7 +2709,6 @@ class PatientManagementScreen extends StatefulWidget {
   @override
   _PatientManagementScreenState createState() => _PatientManagementScreenState();
 }
-
 
 class _PatientManagementScreenState extends State<PatientManagementScreen> {
   bool _isLoading = true;
@@ -2525,7 +2952,7 @@ class _PatientManagementScreenState extends State<PatientManagementScreen> {
                   if (value == null || value.isEmpty) {
                     return '請輸入劑量';
                   }
-                  if (int.tryParse(value) == null || int.parse(value) <= 0) {
+                  if (double.tryParse(value) == null || double.parse(value) <= 0) {
                     return '劑量必須為正整數';
                   }
                   return null;
@@ -2565,8 +2992,8 @@ class _PatientManagementScreenState extends State<PatientManagementScreen> {
                 );
                 return;
               }
-              if (int.tryParse(doseController.text) == null ||
-                  int.parse(doseController.text) <= 0 ||
+              if (double.tryParse(doseController.text) == null ||
+                  double.parse(doseController.text) <= 0 ||
                   int.tryParse(daysController.text) == null ||
                   int.parse(daysController.text) <= 0) {
                 ScaffoldMessenger.of(context).showSnackBar(
@@ -2895,186 +3322,55 @@ class _PrescriptionCaptureScreenState extends State<PrescriptionCaptureScreen> {
   }
 
   Future<void> _takePicture() async {
-  if (_cameraController == null || !_cameraController!.value.isInitialized) {
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('相機未初始化')),
-      );
-    }
-    return;
-  }
-
-  if (appState.currentPatientName == null) {
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('請先在首頁選擇病患')),
-      );
-    }
-    return;
-  }
-
-  setState(() {
-    _isProcessing = true;
-  });
-
-  try {
-    final username = widget.usernameController.text;
-    final password = widget.passwordController.text;
-    debugPrint('Username: $username');
-    debugPrint('Password: $password');
-
-    if (username.isEmpty || password.isEmpty) {
-      throw Exception('用戶名或密碼為空');
-    }
-
-    await _cameraController!.setFocusMode(FocusMode.auto);
-    await _cameraController!.setFlashMode(FlashMode.off);
-
-    if (_focusPoint != null) {
-      final screenSize = MediaQuery.of(context).size;
-      await _setFocusPoint(_focusPoint!, screenSize);
-    }
-
-    await Future.delayed(Duration(milliseconds: 500));
-
-    // 顯示 Loading 畫面
-    if (mounted) {
-      showLoadingDialog(context);
-    }
-
-    final XFile picture = await _cameraController!.takePicture();
-    final bytes = await picture.readAsBytes();
-    final base64Image = base64Encode(bytes);
-
-    final requestBody = jsonEncode({
-      'username': username,
-      'password': password,
-      'requestType': 'ppocr',
-      'data': {'image': 'data:image/jpeg;base64,$base64Image'}
-    });
-    debugPrint('Request Body: $requestBody');
-
-    final response = await HttpClient.instance.post(
-      Uri.parse('https://project.1114580.xyz/data'),
-      headers: {'Content-Type': 'application/json'},
-      body: requestBody,
-    );
-
-    debugPrint('Response Status: ${response.statusCode}');
-    debugPrint('Response Body: ${response.body}');
-
-    if (!mounted) {
-      debugPrint('PrescriptionCaptureScreen is not mounted after HTTP request');
-      return;
-    }
-
-    // 隱藏 Loading 畫面
-    hideLoadingDialog(context);
-
-    if (response.statusCode == 200) {
-      // 驗證響應是否為有效 JSON 物件
-      try {
-        final jsonData = jsonDecode(response.body);
-        if (jsonData is String) {
-          try {
-            jsonDecode(jsonData);
-          } catch (e) {
-            throw Exception('服務器返回純文本或無效 JSON: $jsonData');
-          }
-        } else if (jsonData is! Map<String, dynamic>) {
-          throw Exception('服務器返回非物件 JSON: ${jsonData.runtimeType}');
-        }
-      } catch (e) {
-        debugPrint('Invalid JSON Response: $e');
-        throw Exception('服務器返回無效 JSON: $e');
-      }
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('照片上傳成功')),
-      );
-
-      Navigator.push(
-        context,
-        MaterialPageRoute(
-          builder: (context) => PrescriptionResultScreen(
-            jsonResponse: response.body,
-            usernameController: widget.usernameController,
-            passwordController: widget.passwordController,
-          ),
-        ),
-      );
-    } else {
-      String errorMsg = '上傳失敗: HTTP ${response.statusCode}';
-      try {
-        final errorData = jsonDecode(response.body);
-        errorMsg = errorData['error']?.toString() ?? errorMsg;
-      } catch (_) {}
-      throw Exception(errorMsg);
-    }
-  } catch (e) {
-    debugPrint('Error: $e');
-    if (mounted) {
-      hideLoadingDialog(context);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('處理失敗: $e')),
-      );
-    }
-  } finally {
-    if (mounted) {
-      setState(() {
-        _isProcessing = false;
-        _focusPoint = null;
-      });
-    }
-  }
-}
-
-Future<void> _pickImageFromGallery() async {
-  if (appState.currentPatientName == null) {
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('請先在首頁選擇病患')),
-      );
-    }
-    return;
-  }
-
-  if (_isProcessing) return;
-
-  setState(() {
-    _isProcessing = true;
-  });
-
-  try {
-    final username = widget.usernameController.text;
-    final password = widget.passwordController.text;
-    debugPrint('Username: $username');
-    debugPrint('Password: $password');
-
-    if (username.isEmpty || password.isEmpty) {
-      throw Exception('用戶名或密碼為空');
-    }
-
-    final ImagePicker picker = ImagePicker();
-    final XFile? image = await picker.pickImage(source: ImageSource.gallery);
-
-    if (image == null) {
+    if (_cameraController == null || !_cameraController!.value.isInitialized) {
       if (mounted) {
-        setState(() {
-          _isProcessing = false;
-        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('相機未初始化')),
+        );
       }
       return;
     }
 
-    // 顯示 Loading 畫面
-    if (mounted) {
-      showLoadingDialog(context);
+    if (appState.currentPatientName == null) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('請先在首頁選擇病患')),
+        );
+      }
+      return;
     }
 
-    final imageFile = File(image.path);
-    if (await imageFile.exists()) {
-      final bytes = await imageFile.readAsBytes();
+    setState(() {
+      _isProcessing = true;
+    });
+
+    try {
+      final username = widget.usernameController.text;
+      final password = widget.passwordController.text;
+      debugPrint('Username: $username');
+      debugPrint('Password: $password');
+
+      if (username.isEmpty || password.isEmpty) {
+        throw Exception('用戶名或密碼為空');
+      }
+
+      await _cameraController!.setFocusMode(FocusMode.auto);
+      await _cameraController!.setFlashMode(FlashMode.off);
+
+      if (_focusPoint != null) {
+        final screenSize = MediaQuery.of(context).size;
+        await _setFocusPoint(_focusPoint!, screenSize);
+      }
+
+      await Future.delayed(Duration(milliseconds: 500));
+
+      // 顯示 Loading 畫面
+      if (mounted) {
+        showLoadingDialog(context);
+      }
+
+      final XFile picture = await _cameraController!.takePicture();
+      final bytes = await picture.readAsBytes();
       final base64Image = base64Encode(bytes);
 
       final requestBody = jsonEncode({
@@ -3142,26 +3438,170 @@ Future<void> _pickImageFromGallery() async {
         } catch (_) {}
         throw Exception(errorMsg);
       }
-    } else {
-      throw Exception('照片檔案不存在');
-    }
-  } catch (e) {
-    debugPrint('Error: $e');
-    if (mounted) {
-      hideLoadingDialog(context);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('處理失敗: $e')),
-      );
-    }
-  } finally {
-    if (mounted) {
-      setState(() {
-        _isProcessing = false;
-        _focusPoint = null;
-      });
+    } catch (e) {
+      debugPrint('Error: $e');
+      if (mounted) {
+        hideLoadingDialog(context);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('處理失敗: $e')),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isProcessing = false;
+          _focusPoint = null;
+        });
+      }
     }
   }
-}
+
+  Future<void> _pickImageFromGallery() async {
+    if (appState.currentPatientName == null) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('請先在首頁選擇病患')),
+        );
+      }
+      return;
+    }
+
+    if (_isProcessing) return;
+
+    setState(() {
+      _isProcessing = true;
+    });
+
+    try {
+      final username = widget.usernameController.text;
+      final password = widget.passwordController.text;
+      debugPrint('Username: $username');
+      debugPrint('Password: $password');
+
+      if (username.isEmpty || password.isEmpty) {
+        throw Exception('用戶名或密碼為空');
+      }
+
+      final ImagePicker picker = ImagePicker();
+      final XFile? image = await picker.pickImage(source: ImageSource.gallery);
+
+      if (image == null) {
+        if (mounted) {
+          setState(() {
+            _isProcessing = false;
+          });
+        }
+        return;
+      }
+
+      // 顯示 Loading 畫面
+      if (mounted) {
+        showLoadingDialog(context);
+      }
+
+      final imageFile = File(image.path);
+      if (await imageFile.exists()) {
+        final bytes = await imageFile.readAsBytes();
+        final base64Image = base64Encode(bytes);
+
+        final requestBody = jsonEncode({
+          'username': username,
+          'password': password,
+          'requestType': 'ppocr',
+          'data': {'image': 'data:image/jpeg;base64,$base64Image'}
+        });
+        debugPrint('Request Body: $requestBody');
+
+        final response = await HttpClient.instance.post(
+          Uri.parse('https://project.1114580.xyz/data'),
+          headers: {'Content-Type': 'application/json'},
+          body: requestBody,
+        );
+
+        debugPrint('Response Status: ${response.statusCode}');
+        debugPrint('Response Body: ${response.body}');
+
+        if (!mounted) {
+          debugPrint('PrescriptionCaptureScreen is not mounted after HTTP request');
+          return;
+        }
+
+        // 隱藏 Loading 畫面
+        hideLoadingDialog(context);
+
+        if (response.statusCode == 200) {
+          // 驗證響應是否為有效 JSON 物件
+          try {
+            final jsonData = jsonDecode(response.body);
+            if (jsonData is String) {
+              try {
+                jsonDecode(jsonData);
+              } catch (e) {
+                throw Exception('服務器返回純文本或無效 JSON: $jsonData');
+              }
+            } else if (jsonData is! Map<String, dynamic>) {
+              throw Exception('服務器返回非物件 JSON: ${jsonData.runtimeType}');
+            }
+          } catch (e) {
+            debugPrint('Invalid JSON Response: $e');
+            throw Exception('服務器返回無效 JSON: $e');
+          }
+
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('照片上傳成功')),
+          );
+
+          Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (context) => PrescriptionResultScreen(
+                jsonResponse: response.body,
+                usernameController: widget.usernameController,
+                passwordController: widget.passwordController,
+              ),
+            ),
+          );
+        } else {
+          String errorMsg = '上傳失敗: HTTP ${response.statusCode}';
+          try {
+            final errorData = jsonDecode(response.body);
+            errorMsg = errorData['error']?.toString() ?? errorMsg;
+          } catch (_) {}
+          throw Exception(errorMsg);
+        }
+      } else {
+        throw Exception('照片檔案不存在');
+      }
+    } catch (e) {
+      debugPrint('Error: $e');
+      if (mounted) {
+        hideLoadingDialog(context);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('處理失敗: $e')),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isProcessing = false;
+          _focusPoint = null;
+        });
+      }
+    }
+  }
+
+  void _goBackToHome() {
+    // 直接回到 HomeScreen 並清除中間頁面
+    Navigator.pushNamedAndRemoveUntil(
+      context,
+      '/home', // 使用正確的 HomeScreen 路由名稱
+      (Route<dynamic> route) => false,
+      arguments: {
+        'usernameController': widget.usernameController,
+        'passwordController': widget.passwordController,
+      },
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -3169,6 +3609,10 @@ Future<void> _pickImageFromGallery() async {
       appBar: AppBar(
         title: Text('藥單拍照'),
         backgroundColor: Colors.grey[300],
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back),
+          onPressed: _goBackToHome, // 自定義返回按鈕，直接回到 HomeScreen
+        ),
       ),
       body: Padding(
         padding: const EdgeInsets.all(16.0),
@@ -3310,13 +3754,6 @@ class _PrescriptionResultScreenState extends State<PrescriptionResultScreen> {
   final Debouncer _saveDebouncer = Debouncer(Duration(milliseconds: 500));
 
   final List<String> _usageOptions = [
-    '早餐後',
-    '中餐後',
-    '晚餐後',
-    '早餐後,中餐後',
-    '早餐後,晚餐後',
-    '中餐後,晚餐後',
-    '早餐後,中餐後,晚餐後',
     '早餐前',
     '中餐前',
     '晚餐前',
@@ -3324,6 +3761,13 @@ class _PrescriptionResultScreenState extends State<PrescriptionResultScreen> {
     '早餐前,晚餐前',
     '中餐前,晚餐前',
     '早餐前,中餐前,晚餐前',
+    '早餐後',
+    '中餐後',
+    '晚餐後',
+    '早餐後,中餐後',
+    '早餐後,晚餐後',
+    '中餐後,晚餐後',
+    '早餐後,中餐後,晚餐後',
     '睡前',
   ];
 
@@ -3400,7 +3844,7 @@ class _PrescriptionResultScreenState extends State<PrescriptionResultScreen> {
         usageText = usage.toString();
       }
 
-      final validTimes = ['早餐後', '中餐後', '晚餐後', '早餐前', '中餐前', '晚餐前', '睡前'];
+      final validTimes = ['早餐前', '中餐前', '晚餐前','早餐後', '中餐後', '晚餐後', '睡前'];
       final usageParts = usageText
           .split(',')
           .map((e) => e.trim())
@@ -3567,13 +4011,14 @@ Future<String?> _checkSimilarDrugName(String inputDrugName) async {
   }
 }
 
-  Future<bool> _addDrugToDatabase(String drugName) async {
+  Future<bool> _addDrugToDatabase(String drugName, String drugAppearance) async {
     try {
-      final sanitizedDrugName = _sanitizeInput(drugName);
-      final sql = """
-        INSERT INTO drugs (DrugName)
-        VALUES ('$sanitizedDrugName');
-      """;
+     final sanitizedDrugName = _sanitizeInput(drugName);
+    final sanitizedDrugAppearance = _sanitizeInput(drugAppearance);
+    final sql = """
+      INSERT INTO drugs (DrugName, DrugAppearance)
+      VALUES ('$sanitizedDrugName', '$sanitizedDrugAppearance');
+    """;
 
       final response = await HttpClient.instance.post(
         Uri.parse('https://project.1114580.xyz/data'),
@@ -3672,7 +4117,7 @@ Future<String?> _checkSimilarDrugName(String inputDrugName) async {
                       _isSaving = true;
                     });
                     try {
-                      final success = await _addDrugToDatabase(inputDrugName);
+                      final success = await _addDrugToDatabase(inputDrugName,_appearanceController.text);
                       if (!success) {
                         throw Exception('無法將藥物名稱添加到資料庫');
                       }
@@ -3708,7 +4153,7 @@ Future<String?> _checkSimilarDrugName(String inputDrugName) async {
     );
   }
 
- Future<void> _saveToServer({bool force = false}) async {
+Future<void> _saveToServer({bool force = false}) async {
   if (_isSaving && !force) return;
   if (!mounted) return;
 
@@ -3725,6 +4170,10 @@ Future<String?> _checkSimilarDrugName(String inputDrugName) async {
         _daysController.text.isEmpty) {
       throw Exception('請填寫所有必要字段');
     }
+    final employeeId = appState.currentEmployeeId;
+    if (employeeId == null) {
+      throw Exception('未選擇員工');
+    }
 
     final patientName = _sanitizeInput(appState.currentPatientName!);
     final medication = _sanitizeInput(_medicationController.text);
@@ -3732,7 +4181,7 @@ Future<String?> _checkSimilarDrugName(String inputDrugName) async {
     final days = _sanitizeInput(_daysController.text);
 
     // 驗證劑量和天數為數字
-    final doseNum = int.tryParse(dose);
+    final doseNum = double.tryParse(dose);
     final daysNum = int.tryParse(days);
     if (doseNum == null || daysNum == null) {
       throw Exception('劑量和處方天數必須為數字');
@@ -3758,34 +4207,107 @@ Future<String?> _checkSimilarDrugName(String inputDrugName) async {
       final patientId = verificationResult['patient_id'];
       final drugId = verificationResult['drug_id'];
 
-      final sqlValues = usageTimes.map((timing) {
+      // 為每個用藥時間生成 INSERT INTO medications 和 INSERT INTO records 語句
+      final sqlStatements = usageTimes.map((timing) {
         final sanitizedTiming = _sanitizeInput(timing);
-        return "('$patientId', '$drugId', '$sanitizedTiming', '$dose', '$days')";
-      }).join(',');
+        return """
+          INSERT INTO medications (PatientID, DrugID, Timing, Dose, days)
+          VALUES ('$patientId', '$drugId', '$sanitizedTiming', '$dose', '$days');
+          INSERT INTO records (EmployeeID, PatientID, Type, EntryDatetime, DescribeMean)
+          VALUES (
+            '$employeeId',
+            '$patientId',
+            'ocr',
+            NOW(),
+            '新增$patientName $sanitizedTiming 的藥物進資料庫'
+          );
+        """;
+      }).join('');
 
+      // 將所有語句包裝在一個事務中
       final sql = """
-        INSERT INTO medications (PatientID, DrugID, Timing, Dose, days)
-        VALUES $sqlValues;
+        BEGIN;
+        $sqlStatements
+        COMMIT;
       """;
 
-      final response = await HttpClient.instance.post(
+      // 準備 sql update 請求
+      final sqlUpdateRequestBody = {
+        'username': _cachedUsername,
+        'password': _cachedPassword,
+        'requestType': 'sql update',
+        'data': {'sql': sql}
+      };
+      final sqlUpdateJson = JsonEncoder.withIndent('  ').convert(sqlUpdateRequestBody);
+      if (kDebugMode) {
+        debugPrint('SQL Update Request JSON (Pretty):\n$sqlUpdateJson');
+      }
+
+      // 準備 sendDataToPC 請求
+      final sendDataToPCData = usageTimes.map((timing) {
+        return {
+          'patient_name': patientName,
+          'medication': medication,
+          'usage': [timing], // 單個用藥時間作為陣列
+          'dosage': doseNum,
+          'appearance': '未知', // 暫時設為固定值，需後續確認來源
+          'days': daysNum,
+        };
+      }).toList();
+
+      // 從 HomeScreen 獲取配對碼
+      final homeScreenState = context.findAncestorStateOfType<_HomeScreenState>();
+      final pairCode = appState.pairCode;
+
+      final sendDataToPCRequestBody = {
+        'username': _cachedUsername,
+        'password': _cachedPassword,
+        'requestType': 'sendDataToPC',
+        'data': sendDataToPCData, // 使用結構化數據，而不是 sql
+        'id': pairCode, // 配對碼作為獨立字段
+      };
+      final sendDataToPCJson = JsonEncoder.withIndent('  ').convert(sendDataToPCRequestBody);
+      if (kDebugMode) {
+        debugPrint('Send Data to PC Request JSON (Pretty):\n$sendDataToPCJson');
+      }
+
+      // 並行發送兩個 HTTP 請求
+      final sqlUpdateRequest = http.post(
         Uri.parse('https://project.1114580.xyz/data'),
         headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({
-          'username': _cachedUsername,
-          'password': _cachedPassword,
-          'requestType': 'sql update',
-          'data': {'sql': sql}
-        }),
+        body: jsonEncode(sqlUpdateRequestBody),
       );
 
-      if (response.statusCode != 200) {
-        String errorMsg = '保存失敗: HTTP ${response.statusCode}';
+      final sendDataToPCRequest = http.post(
+        Uri.parse('https://project.1114580.xyz/data'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode(sendDataToPCRequestBody),
+      );
+
+      final responses = await Future.wait([sqlUpdateRequest, sendDataToPCRequest]);
+      final sqlUpdateResponse = responses[0];
+      final sendDataToPCResponse = responses[1];
+
+      // 檢查 sql update 請求的狀態
+      if (sqlUpdateResponse.statusCode != 200) {
+        String errorMsg = '保存失敗: HTTP ${sqlUpdateResponse.statusCode}';
         try {
-          final errorData = jsonDecode(response.body);
+          final errorData = jsonDecode(sqlUpdateResponse.body);
           errorMsg = errorData['error']?.toString() ?? errorMsg;
         } catch (_) {}
         throw Exception(errorMsg);
+      }
+
+      // 可選：檢查 sendDataToPC 請求的狀態
+      if (sendDataToPCResponse.statusCode != 200) {
+        if (kDebugMode) {
+          debugPrint('Send Data to PC failed: HTTP ${sendDataToPCResponse.statusCode}');
+          try {
+            final errorData = jsonDecode(sendDataToPCResponse.body);
+            debugPrint('Send Data to PC error: ${errorData['error']?.toString()}');
+          } catch (_) {}
+        }
+        // 不拋出異常，僅記錄日誌，確保 sql update 的成功不受影響
       }
 
       if (mounted && _scaffoldMessenger != null) {
@@ -3793,11 +4315,8 @@ Future<String?> _checkSimilarDrugName(String inputDrugName) async {
           SnackBar(content: Text('資料保存成功')),
         );
         _resetForm();
-        Navigator.pushNamedAndRemoveUntil(
-          context,
-          '/home',
-          (route) => false,
-        );
+        // 直接回到前一個 PrescriptionCaptureScreen 頁面
+        Navigator.pop(context);
         Provider.of<AppState>(context, listen: false).refreshHomeData();
       }
     } else {
@@ -3912,7 +4431,7 @@ Future<String?> _checkSimilarDrugName(String inputDrugName) async {
                   fillColor: Colors.white,
                 ),
                 keyboardType: TextInputType.number,
-                inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+
               ),
               const SizedBox(height: 16),
               TextField(
@@ -3959,6 +4478,230 @@ Future<String?> _checkSimilarDrugName(String inputDrugName) async {
             ],
           ),
         ),
+      ),
+    );
+  }
+}
+
+//員工修改
+class EmployeeManagementScreen extends StatefulWidget {
+  const EmployeeManagementScreen({super.key});
+
+  @override
+  _EmployeeManagementScreenState createState() => _EmployeeManagementScreenState();
+}
+
+class _EmployeeManagementScreenState extends State<EmployeeManagementScreen> {
+  late AppState _appState;
+  late ScaffoldMessengerState _scaffoldMessenger;
+  List<Map<String, dynamic>> _employees = [];
+  bool _isLoading = true;
+  String? _errorMessage;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        _fetchEmployees();
+      }
+    });
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _appState = Provider.of<AppState>(context, listen: false);
+    _scaffoldMessenger = ScaffoldMessenger.of(context);
+  }
+
+  @override
+  void dispose() {
+    super.dispose();
+  }
+
+  Future<void> _fetchEmployees() async {
+    if (!mounted) return;
+
+    if (_appState.centerId == null) {
+      if (mounted) {
+        setState(() {
+          _errorMessage = '未找到中心 ID';
+          _isLoading = false;
+        });
+      }
+      return;
+    }
+
+    try {
+      if (mounted) {
+        setState(() => _isLoading = true);
+      }
+      final sql = '''
+        SELECT EmployeeID, EmployeeName, EmployeePicture, states
+        FROM employees
+        WHERE CenterID = '${_appState.centerId}' AND states = 1
+      ''';
+
+      final response = await HttpClient.instance.post(
+        Uri.parse('https://project.1114580.xyz/data'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'username': _appState.usernameController.text,
+          'password': _appState.passwordController.text,
+          'requestType': 'sql search',
+          'data': {'sql': sql},
+        }),
+      );
+
+      if (response.statusCode != 200) {
+        throw Exception('伺服器錯誤: ${response.statusCode}');
+      }
+
+      final data = jsonDecode(response.body) as List<dynamic>;
+      if (mounted) {
+        setState(() {
+          _employees = data.map((item) {
+            final picture = item['EmployeePicture']?.toString();
+            print('EmployeePicture length for EmployeeID ${item['EmployeeID']}: ${picture?.length ?? 0}');
+            return {
+              'EmployeeID': item['EmployeeID']?.toString() ?? '未知ID',
+              'EmployeeName': item['EmployeeName']?.toString() ?? '未知姓名',
+              'EmployeePicture': picture,
+              'state': item['state'] as int? ?? 1,
+            };
+          }).toList();
+          _isLoading = false;
+          _errorMessage = null;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _errorMessage = '獲取員工資料失敗: $e';
+          _isLoading = false;
+        });
+      }
+    }
+  }
+
+  
+
+  Future<void> _deleteEmployee(Map<String, dynamic> employee) async {
+    if (!mounted) return;
+
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('確認停用？'),
+        content: Text('確定要停用員工 ${employee['EmployeeName']} 嗎？'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('取消'),
+          ),
+          TextButton(
+            onPressed: () async {
+              Navigator.pop(context);
+              if (!mounted) return;
+              try {
+                final sql = '''
+                  UPDATE employees
+                  SET states = 0
+                  WHERE EmployeeID = '${employee['EmployeeID']}' AND CenterID = '${_appState.centerId}'
+                ''';
+                final response = await HttpClient.instance.post(
+                  Uri.parse('https://project.1114580.xyz/data'),
+                  headers: {'Content-Type': 'application/json'},
+                  body: jsonEncode({
+                    'username': _appState.usernameController.text,
+                    'password': _appState.passwordController.text,
+                    'requestType': 'sql update',
+                    'data': {'sql': sql},
+                  }),
+                );
+                if (response.statusCode == 200) {
+                  if (mounted) {
+                    await _fetchEmployees();
+                    _scaffoldMessenger.showSnackBar(
+                      const SnackBar(content: Text('員工已停用')),
+                    );
+                  }
+                } else {
+                  throw Exception('停用失敗: HTTP ${response.statusCode}');
+                }
+              } catch (e) {
+                if (mounted) {
+                  _scaffoldMessenger.showSnackBar(
+                    SnackBar(content: Text('停用員工失敗: $e')),
+                  );
+                }
+              }
+            },
+            child: const Text('確認'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  bool _isValidBase64(String? base64Str) {
+    if (base64Str == null || base64Str.isEmpty) return false;
+    try {
+      final cleanStr = base64Str.replaceAll(RegExp(r'^data:image/[^;]+;base64,'), '');
+      if (cleanStr.length % 4 != 0) return false;
+      final base64Pattern = RegExp(r'^[A-Za-z0-9+/=]+$');
+      return base64Pattern.hasMatch(cleanStr);
+    } catch (e) {
+      return false;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('員工管理'),
+        backgroundColor: Colors.grey[300],
+      ),
+      body: Column(
+        children: [
+          Expanded(
+            child: _isLoading
+                ? const Center(child: CircularProgressIndicator())
+                : _errorMessage != null
+                    ? Center(child: Text(_errorMessage!, style: const TextStyle(color: Colors.red)))
+                    : _employees.isEmpty
+                        ? const Center(child: Text('無員工資料'))
+                        : ListView.builder(
+                            padding: const EdgeInsets.all(8),
+                            itemCount: _employees.length,
+                            itemBuilder: (context, index) {
+                              final employee = _employees[index];
+                              return Card(
+                                child: ListTile(
+                                  leading: const Icon(Icons.person, size: 50),
+                                  title: Text('${employee['EmployeeID']}.${employee['EmployeeName']}'),
+                                  trailing: IconButton(
+                                    icon: const Icon(Icons.delete),
+                                    onPressed: () => _deleteEmployee(employee),
+                                    tooltip: '停用',
+                                  ),
+                                ),
+                              );
+                            },
+                          ),
+          ),
+          Padding(
+            padding: const EdgeInsets.all(16.0),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [
+                
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }
