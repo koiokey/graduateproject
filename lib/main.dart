@@ -843,32 +843,32 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  Widget _buildReviewJournalButton() {
-    return ElevatedButton.icon(
-      onPressed: () {
-        // Placeholder for reviewing journal functionality
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('審核日誌功能尚未實現')),
-        );
-      },
-      style: ElevatedButton.styleFrom(
-        backgroundColor: Colors.blue[400],
-        minimumSize: const Size(double.infinity, 50),
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(10),
-        ),
+Widget _buildReviewJournalButton() {
+  return ElevatedButton.icon(
+    onPressed: () {
+      Navigator.push(
+        context,
+        MaterialPageRoute(builder: (context) => const ReviewJournalScreen()),
+      );
+    },
+    style: ElevatedButton.styleFrom(
+      backgroundColor: Colors.blue[400],
+      minimumSize: const Size(double.infinity, 50),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(10),
       ),
-      icon: const Icon(
-        Icons.book,
-        color: Colors.white,
-      ),
-      label: const Text(
-        '審核日誌',
-        style: TextStyle(fontSize: 18, color: Colors.white),
-        overflow: TextOverflow.ellipsis,
-      ),
-    );
-  }
+    ),
+    icon: const Icon(
+      Icons.book,
+      color: Colors.white,
+    ),
+    label: const Text(
+      '審核日誌',
+      style: TextStyle(fontSize: 18, color: Colors.white),
+      overflow: TextOverflow.ellipsis,
+    ),
+  );
+}
 
   Widget _buildPatientsPage() {
     return Column(
@@ -1717,7 +1717,7 @@ Widget _buildBlankPage() {
           ),
         ],
       ),
-      drawer: Drawer(
+   drawer: Drawer(
         child: ListView(
           padding: EdgeInsets.zero,
           children: [
@@ -1725,23 +1725,6 @@ Widget _buildBlankPage() {
               decoration: BoxDecoration(color: Colors.grey[300]),
               child: const Text('選單', style: TextStyle(fontSize: 20)),
             ),
-            // 動態員工按鈕
-            ..._employees.map((employee) {
-              final employeeId = employee['EmployeeID'] as String;
-              final employeeName = employee['EmployeeName'] as String;
-              return ListTile(
-                title: Text('$employeeId.$employeeName'),
-                trailing: _selectedEmployeeId == employeeId
-                    ? const Icon(Icons.check_circle, color: Colors.green)
-                    : null,
-                onTap: () {
-                  setState(() {
-                    _selectedEmployeeId = employeeId;
-                    _appState.setCurrentEmployee(employeeId); // 將選擇的員工 ID 寫入 AppState
-                  });
-                },
-              );
-            }).toList(),
             // 配對碼輸入框
             const Padding(
               padding: EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
@@ -1776,6 +1759,23 @@ Widget _buildBlankPage() {
                 },
               ),
             ),
+            // 動態員工按鈕
+            ..._employees.map((employee) {
+              final employeeId = employee['EmployeeID'] as String;
+              final employeeName = employee['EmployeeName'] as String;
+              return ListTile(
+                title: Text('$employeeId.$employeeName'),
+                trailing: _selectedEmployeeId == employeeId
+                    ? const Icon(Icons.check_circle, color: Colors.green)
+                    : null,
+                onTap: () {
+                  setState(() {
+                    _selectedEmployeeId = employeeId;
+                    _appState.setCurrentEmployee(employeeId); // 將選擇的員工 ID 寫入 AppState
+                  });
+                },
+              );
+            }).toList(),
           ],
         ),
       ),
@@ -4702,6 +4702,441 @@ class _EmployeeManagementScreenState extends State<EmployeeManagementScreen> {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class ReviewJournalScreen extends StatefulWidget {
+  const ReviewJournalScreen({Key? key}) : super(key: key);
+
+  @override
+  State<ReviewJournalScreen> createState() => _ReviewJournalScreenState();
+}
+
+class _ReviewJournalScreenState extends State<ReviewJournalScreen> {
+  late AppState _appState;
+  List<Map<String, dynamic>> _records = [];
+  List<Map<String, dynamic>> _employees = [];
+  List<String> _types = [];
+  bool _isLoading = true;
+  bool _isLoadingMore = false;
+  String? _errorMessage;
+  int _limit = 10;
+  int _offset = 0;
+  bool _hasMore = true;
+
+  // 篩選條件
+  String? _selectedEmployeeId;
+  String? _selectedType;
+
+  // 滾動控制器
+  final ScrollController _scrollController = ScrollController();
+
+  // 快取數據
+  List<Map<String, dynamic>>? _cachedEmployees;
+  List<String>? _cachedTypes;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        _preLoadData();
+      }
+    });
+
+    // 監聽滾動以實現分頁加載
+    _scrollController.addListener(() {
+      if (_scrollController.position.pixels >= _scrollController.position.maxScrollExtent - 200 &&
+          !_isLoadingMore &&
+          _hasMore &&
+          !_isLoading) {
+        _fetchMoreRecords();
+      }
+    });
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _appState = Provider.of<AppState>(context, listen: false);
+  }
+
+  @override
+  void dispose() {
+    _scrollController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _preLoadData() async {
+    await Future.wait([
+      _fetchEmployees(),
+      _fetchRecords(isRefresh: true, initialLoad: true),
+    ]);
+  }
+
+  Future<void> _fetchEmployees() async {
+    final prefs = await SharedPreferences.getInstance();
+    final cachedEmployeesJson = prefs.getString('cached_employees_${_appState.centerId}');
+    if (cachedEmployeesJson != null) {
+      final cachedData = jsonDecode(cachedEmployeesJson) as List<dynamic>;
+      _cachedEmployees = cachedData.map((item) => Map<String, dynamic>.from(item)).toList();
+      _employees = _cachedEmployees!;
+      return;
+    }
+
+    if (_appState.centerId == null) {
+      _employees = [];
+      return;
+    }
+
+    try {
+      final sql = '''
+        SELECT EmployeeID, EmployeeName
+        FROM employees
+        WHERE CenterID = '${_appState.centerId}' AND states = 1
+      ''';
+
+      final response = await HttpClient.instance.post(
+        Uri.parse('https://project.1114580.xyz/data'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'username': _appState.usernameController.text,
+          'password': _appState.passwordController.text,
+          'requestType': 'sql search',
+          'data': {'sql': sql},
+        }),
+      );
+
+      if (response.statusCode != 200) {
+        throw Exception('伺服器錯誤: ${response.statusCode}');
+      }
+
+      final data = jsonDecode(response.body) as List<dynamic>;
+      final List<Map<String, dynamic>> employees = data.map((item) {
+        final employeeName = item['EmployeeName']?.toString() ?? '未知姓名';
+        return <String, dynamic>{
+          'EmployeeID': item['EmployeeID']?.toString() ?? '未知ID',
+          'EmployeeName': employeeName,
+        };
+      }).toList();
+
+      final filteredEmployees = employees.where((emp) {
+        final name = emp['EmployeeName'] as String;
+        return !RegExp(r'^\d+$').hasMatch(name);
+      }).toList();
+
+      _cachedEmployees = filteredEmployees;
+      await prefs.setString('cached_employees_${_appState.centerId}', jsonEncode(filteredEmployees));
+
+      if (mounted) {
+        setState(() {
+          _employees = filteredEmployees;
+          _isLoading = _records.isEmpty;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _employees = [];
+          _isLoading = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _fetchRecords({bool isRefresh = true, bool initialLoad = false}) async {
+    if (_appState.centerId == null) {
+      setState(() {
+        _errorMessage = '未找到中心 ID';
+        _isLoading = false;
+      });
+      return;
+    }
+
+    try {
+      if (isRefresh) {
+        _offset = 0;
+        _hasMore = true;
+        if (!initialLoad) {
+          setState(() {
+            _records = [];
+            _isLoading = true;
+          });
+        }
+      }
+
+      List<String> conditions = [];
+      if (_selectedEmployeeId != null) conditions.add("EmployeeID = '$_selectedEmployeeId'");
+      if (_selectedType != null) conditions.add("Type = '$_selectedType'");
+      String whereClause = conditions.isNotEmpty ? 'WHERE ${conditions.join(' AND ')}' : '';
+
+      final sql = '''
+        SELECT EmployeeID, PatientID, Type, EntryDatetime, DescribeMean
+        FROM records
+        $whereClause
+        ORDER BY EntryDatetime DESC
+        LIMIT $_limit OFFSET $_offset
+      ''';
+
+      final response = await HttpClient.instance.post(
+        Uri.parse('https://project.1114580.xyz/data'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'username': _appState.usernameController.text,
+          'password': _appState.passwordController.text,
+          'requestType': 'sql search',
+          'data': {'sql': sql},
+        }),
+      );
+
+      if (response.statusCode != 200) {
+        throw Exception('伺服器錯誤: ${response.statusCode}');
+      }
+
+      final data = jsonDecode(response.body) as List<dynamic>;
+      final List<Map<String, dynamic>> records = data.map((item) {
+        return {
+          'EmployeeID': item['EmployeeID']?.toString() ?? '未知ID',
+          'PatientID': item['PatientID']?.toString() ?? '未知患者',
+          'Type': item['Type']?.toString() ?? '未知操作',
+          'EntryDatetime': item['EntryDatetime']?.toString() ?? '未知時間',
+          'DescribeMean': item['DescribeMean']?.toString() ?? '無描述',
+        };
+      }).toList();
+
+      final prefs = await SharedPreferences.getInstance();
+      if (_types.isEmpty && _cachedTypes == null) {
+        final cachedTypesJson = prefs.getString('cached_types_${_appState.centerId}');
+        if (cachedTypesJson != null) {
+          _cachedTypes = (jsonDecode(cachedTypesJson) as List<dynamic>).cast<String>();
+          _types = _cachedTypes!;
+        } else {
+          final typeSql = '''
+            SELECT DISTINCT Type
+            FROM records
+          ''';
+          final typeResponse = await HttpClient.instance.post(
+            Uri.parse('https://project.1114580.xyz/data'),
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode({
+              'username': _appState.usernameController.text,
+              'password': _appState.passwordController.text,
+              'requestType': 'sql search',
+              'data': {'sql': typeSql},
+            }),
+          );
+
+          if (typeResponse.statusCode == 200) {
+            final typeData = jsonDecode(typeResponse.body) as List<dynamic>;
+            _cachedTypes = typeData.map((item) => item['Type']?.toString() ?? '未知操作').toList();
+            _types = _cachedTypes!;
+            await prefs.setString('cached_types_${_appState.centerId}', jsonEncode(_types));
+          }
+        }
+      } else if (_cachedTypes != null) {
+        _types = _cachedTypes!;
+      }
+
+      if (mounted) {
+        setState(() {
+          if (isRefresh) {
+            _records = records;
+          } else {
+            _records.addAll(records);
+          }
+          _isLoading = false;
+          _isLoadingMore = false;
+          _errorMessage = null;
+          _offset += _limit;
+          _hasMore = records.length == _limit;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _errorMessage = '獲取日誌資料失敗: $e';
+          _isLoading = false;
+          _isLoadingMore = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _fetchMoreRecords() async {
+    if (_isLoadingMore || !_hasMore) return;
+
+    setState(() {
+      _isLoadingMore = true;
+    });
+
+    await _fetchRecords(isRefresh: false);
+  }
+
+  String _getEmployeeName(String employeeId) {
+    final employee = _employees.firstWhere(
+      (emp) => emp['EmployeeID'] == employeeId,
+      orElse: () => <String, dynamic>{'EmployeeID': '', 'EmployeeName': '未知員工'},
+    );
+    return employee['EmployeeName']?.toString() ?? '未知員工';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: () {
+        FocusScope.of(context).unfocus();
+      },
+      child: Scaffold(
+        appBar: AppBar(
+          title: const Text('審核日誌'),
+          backgroundColor: Colors.grey[300],
+          centerTitle: true,
+        ),
+        body: Column(
+          children: [
+            Padding(
+              padding: const EdgeInsets.all(8.0),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Autocomplete<String>(
+                      optionsBuilder: (TextEditingValue textEditingValue) {
+                        final input = textEditingValue.text.trim();
+                        if (input.isEmpty) {
+                          return _employees.map((emp) => emp['EmployeeName'] as String);
+                        }
+                        return _employees
+                            .map((emp) => emp['EmployeeName'] as String)
+                            .where((name) => name.contains(input));
+                      },
+                      onSelected: (String selection) {
+                        final selectedEmployee = _employees.firstWhere(
+                          (emp) => emp['EmployeeName'] == selection,
+                          orElse: () => <String, dynamic>{'EmployeeID': null},
+                        );
+                        setState(() {
+                          _selectedEmployeeId = selectedEmployee['EmployeeID'];
+                        });
+                        _fetchRecords();
+                      },
+                      fieldViewBuilder: (context, controller, focusNode, onFieldSubmitted) {
+                        return TextField(
+                          controller: controller,
+                          focusNode: focusNode,
+                          decoration: InputDecoration(
+                            labelText: '篩選員工',
+                            border: const OutlineInputBorder(),
+                            suffixIcon: controller.text.isNotEmpty
+                                ? IconButton(
+                                    icon: const Icon(Icons.clear),
+                                    onPressed: () {
+                                      setState(() {
+                                        controller.clear();
+                                        _selectedEmployeeId = null;
+                                        FocusScope.of(context).unfocus();
+                                      });
+                                      _fetchRecords();
+                                    },
+                                  )
+                                : null,
+                          ),
+                          onSubmitted: (value) => onFieldSubmitted(),
+                        );
+                      },
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Autocomplete<String>(
+                      optionsBuilder: (TextEditingValue textEditingValue) {
+                        final input = textEditingValue.text.trim();
+                        if (input.isEmpty) {
+                          return _types;
+                        }
+                        return _types.where((type) => type.contains(input));
+                      },
+                      onSelected: (String selection) {
+                        setState(() {
+                          _selectedType = selection;
+                        });
+                        _fetchRecords();
+                      },
+                      fieldViewBuilder: (context, controller, focusNode, onFieldSubmitted) {
+                        return TextField(
+                          controller: controller,
+                          focusNode: focusNode,
+                          decoration: InputDecoration(
+                            labelText: '篩選操作類型',
+                            border: const OutlineInputBorder(),
+                            suffixIcon: controller.text.isNotEmpty
+                                ? IconButton(
+                                    icon: const Icon(Icons.clear),
+                                    onPressed: () {
+                                      setState(() {
+                                        controller.clear();
+                                        _selectedType = null;
+                                        FocusScope.of(context).unfocus();
+                                      });
+                                      _fetchRecords();
+                                    },
+                                  )
+                                : null,
+                          ),
+                          onSubmitted: (value) => onFieldSubmitted(),
+                        );
+                      },
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Expanded(
+              child: _isLoading
+                  ? const Center(child: CircularProgressIndicator())
+                  : _errorMessage != null
+                      ? Center(child: Text(_errorMessage!, style: const TextStyle(color: Colors.red)))
+                      : _records.isEmpty
+                          ? const Center(child: Text('無日誌資料'))
+                          : ListView.builder(
+                              controller: _scrollController,
+                              physics: const AlwaysScrollableScrollPhysics(),
+                              itemExtent: 100, // 增加高度至 100，減少擁擠感
+                              padding: const EdgeInsets.all(12), // 增加內邊距
+                              itemCount: _records.length + (_hasMore ? 1 : 0),
+                              itemBuilder: (context, index) {
+                                if (index == _records.length && _hasMore) {
+                                  return const Center(child: CircularProgressIndicator());
+                                }
+                                final record = _records[index];
+                                final employeeName = _getEmployeeName(record['EmployeeID']);
+                                return Card(
+                                  key: ValueKey(record['EntryDatetime']),
+                                  child: Padding(
+                                    padding: const EdgeInsets.all(12.0), // 增加內部間距
+                                    child: Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          '$employeeName ${record['DescribeMean']}', // 移除 (患者ID)
+                                          style: const TextStyle(fontWeight: FontWeight.bold),
+                                        ),
+                                        const SizedBox(height: 4), // 增加行間距
+                                        Text(
+                                          '操作功能:${record['Type']} 修改時間:${record['EntryDatetime']}',
+                                          style: const TextStyle(color: Colors.grey),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                );
+                              },
+                            ),
+            ),
+          ],
+        ),
       ),
     );
   }
