@@ -4360,8 +4360,8 @@ Future<void> _saveToServer({bool force = false}) async {
         'username': _cachedUsername,
         'password': _cachedPassword,
         'requestType': 'sendDataToPC',
-        'data': sendDataToPCData, // 使用結構化數據，而不是 sql
-        'id': pairCode, // 配對碼作為獨立字段
+        'data':{'ocr': sendDataToPCData ,'id': pairCode} 
+        
       };
       final sendDataToPCJson = JsonEncoder.withIndent('  ').convert(sendDataToPCRequestBody);
       if (kDebugMode) {
@@ -4376,7 +4376,7 @@ Future<void> _saveToServer({bool force = false}) async {
       );
 
       final sendDataToPCRequest = http.post(
-        Uri.parse('https://project.1114580.xyz/data'),
+        Uri.parse('https://connect.1114580.xyz/data'),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode(sendDataToPCRequestBody),
       );
@@ -5227,12 +5227,11 @@ class _ReviewJournalScreenState extends State<ReviewJournalScreen> {
         };
       }).toList();
 
-      // 查詢操作類型，加入 CenterID 條件
+      // 直接從後端查詢操作類型，不檢查快取
       if (_types.isEmpty) {
         final typeSql = '''
           SELECT DISTINCT Type
           FROM records
-          WHERE CenterID = '${_appState.centerId}'
         ''';
         final typeResponse = await http.post(
           Uri.parse('https://project.1114580.xyz/data'),
@@ -5248,19 +5247,9 @@ class _ReviewJournalScreenState extends State<ReviewJournalScreen> {
         if (typeResponse.statusCode == 200) {
           final typeData = jsonDecode(typeResponse.body) as List<dynamic>;
           print('Fetched Type Data: $typeData');
-          _types = typeData
-              .map((item) => item['Type']?.toString())
-              .where((type) => type != null && type.isNotEmpty)
-              .cast<String>()
-              .toList();
-          if (_types.isEmpty) {
-            print('No types found, setting default');
-            _types = ['未知操作']; // 提供預設值
-          }
+          _types = typeData.map((item) => item['Type']?.toString() ?? '未知操作').toList();
           print('Updated Types: $_types');
         } else {
-          print('Failed to fetch types, status: ${typeResponse.statusCode}');
-          _types = ['未知操作']; // 後端失敗時提供預設值
           throw Exception('獲取操作類型失敗: ${typeResponse.statusCode}');
         }
       }
@@ -5280,7 +5269,6 @@ class _ReviewJournalScreenState extends State<ReviewJournalScreen> {
         });
       }
     } catch (e) {
-      print('Error fetching records: $e');
       if (mounted) {
         setState(() {
           _errorMessage = '獲取日誌資料失敗: $e';
