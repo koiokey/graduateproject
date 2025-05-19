@@ -5050,6 +5050,7 @@ class _ReviewJournalScreenState extends State<ReviewJournalScreen> {
   late AppState _appState;
   List<Map<String, dynamic>> _records = [];
   List<Map<String, dynamic>> _employees = [];
+  List<Map<String, dynamic>> _patients = [];
   List<String> _types = [];
   bool _isLoading = true;
   bool _isLoadingMore = false;
@@ -5060,7 +5061,9 @@ class _ReviewJournalScreenState extends State<ReviewJournalScreen> {
 
   // 篩選條件
   String? _selectedEmployeeId;
+  String? _selectedPatientId;
   String? _selectedType;
+  DateTime? _selectedDate;
 
   // 滾動控制器
   final ScrollController _scrollController = ScrollController();
@@ -5099,6 +5102,7 @@ class _ReviewJournalScreenState extends State<ReviewJournalScreen> {
   Future<void> _preLoadData() async {
     await Future.wait([
       _fetchEmployees(),
+      _fetchPatients(),
       _fetchRecords(isRefresh: true, initialLoad: true),
     ]);
   }
@@ -5138,21 +5142,16 @@ class _ReviewJournalScreenState extends State<ReviewJournalScreen> {
       debugPrint('Raw employees data: $data, length: ${data.length}');
 
       final List<Map<String, dynamic>> employees = data.map((item) {
-        final employeeName = item['EmployeeName']?.toString() ?? '未知姓名';
+        final employeeName = item['EmployeeName']?.toString() ?? '';
         return <String, dynamic>{
           'EmployeeID': item['EmployeeID']?.toString() ?? '未知ID',
-          'EmployeeName': employeeName,
+          'EmployeeName': employeeName.isEmpty ? '未知姓名' : employeeName,
         };
-      }).toList();
-
-      final filteredEmployees = employees.where((emp) {
-        final name = emp['EmployeeName'] as String;
-        return name.isNotEmpty;
       }).toList();
 
       if (mounted) {
         setState(() {
-          _employees = filteredEmployees;
+          _employees = employees;
           _isLoading = _records.isEmpty;
         });
       }
@@ -5162,6 +5161,63 @@ class _ReviewJournalScreenState extends State<ReviewJournalScreen> {
         setState(() {
           _employees = [];
           _isLoading = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _fetchPatients() async {
+    if (_appState.centerId == null) {
+      debugPrint('Center ID is null, skipping patient fetch');
+      _patients = [];
+      return;
+    }
+
+    try {
+      final sql = '''
+        SELECT DISTINCT PatientID, PatientName
+        FROM patients
+        WHERE CenterID = '${_appState.centerId}'
+      ''';
+
+      debugPrint('Sending request with username: ${_appState.usernameController.text}, centerId: ${_appState.centerId}');
+      final response = await http.post(
+        Uri.parse('https://project.1114580.xyz/data'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'username': _appState.usernameController.text,
+          'password': _appState.passwordController.text,
+          'requestType': 'sql search',
+          'data': {'sql': sql},
+        }),
+      );
+
+      if (response.statusCode != 200) {
+        debugPrint('API request failed with status: ${response.statusCode}, body: ${response.body}');
+        throw Exception('伺服器錯誤: ${response.statusCode}');
+      }
+
+      final data = jsonDecode(response.body) as List<dynamic>;
+      debugPrint('Raw patients data: $data, length: ${data.length}');
+
+      final List<Map<String, dynamic>> patients = data.map((item) {
+        final patientName = item['PatientName']?.toString() ?? item['PatientID']?.toString() ?? '';
+        return <String, dynamic>{
+          'PatientID': item['PatientID']?.toString() ?? '',
+          'PatientName': patientName.isEmpty ? '無名稱' : patientName,
+        };
+      }).toList();
+
+      if (mounted) {
+        setState(() {
+          _patients = patients;
+        });
+      }
+    } catch (e) {
+      debugPrint('Error fetching patients: $e');
+      if (mounted) {
+        setState(() {
+          _patients = [];
         });
       }
     }
@@ -5190,7 +5246,12 @@ class _ReviewJournalScreenState extends State<ReviewJournalScreen> {
 
       List<String> conditions = [];
       if (_selectedEmployeeId != null) conditions.add("EmployeeID = '$_selectedEmployeeId'");
+      if (_selectedPatientId != null) conditions.add("PatientID = '$_selectedPatientId'");
       if (_selectedType != null) conditions.add("Type = '$_selectedType'");
+      if (_selectedDate != null) {
+        final dateStr = _selectedDate!.toIso8601String().split('T')[0];
+        conditions.add("DATE(EntryDatetime) = '$dateStr'");
+      }
       String whereClause = conditions.isNotEmpty ? 'WHERE ${conditions.join(' AND ')}' : '';
 
       final sql = '''
@@ -5219,15 +5280,14 @@ class _ReviewJournalScreenState extends State<ReviewJournalScreen> {
       final data = jsonDecode(response.body) as List<dynamic>;
       final List<Map<String, dynamic>> records = data.map((item) {
         return {
-          'EmployeeID': item['EmployeeID']?.toString() ?? '未知ID',
-          'PatientID': item['PatientID']?.toString() ?? '未知患者',
-          'Type': item['Type']?.toString() ?? '未知操作',
-          'EntryDatetime': item['EntryDatetime']?.toString() ?? '未知時間',
-          'DescribeMean': item['DescribeMean']?.toString() ?? '無描述',
+          'EmployeeID': item['EmployeeID']?.toString() ?? '',
+          'PatientID': item['PatientID']?.toString() ?? '',
+          'Type': item['Type']?.toString() ?? '',
+          'EntryDatetime': item['EntryDatetime']?.toString() ?? '',
+          'DescribeMean': item['DescribeMean']?.toString() ?? '',
         };
       }).toList();
 
-      // 直接從後端查詢操作類型，不檢查快取
       if (_types.isEmpty) {
         final typeSql = '''
           SELECT DISTINCT Type
@@ -5247,7 +5307,7 @@ class _ReviewJournalScreenState extends State<ReviewJournalScreen> {
         if (typeResponse.statusCode == 200) {
           final typeData = jsonDecode(typeResponse.body) as List<dynamic>;
           print('Fetched Type Data: $typeData');
-          _types = typeData.map((item) => item['Type']?.toString() ?? '未知操作').toList();
+          _types = typeData.map((item) => item['Type']?.toString() ?? '').toList();
           print('Updated Types: $_types');
         } else {
           throw Exception('獲取操作類型失敗: ${typeResponse.statusCode}');
@@ -5292,17 +5352,82 @@ class _ReviewJournalScreenState extends State<ReviewJournalScreen> {
   String _getEmployeeName(String employeeId) {
     final employee = _employees.firstWhere(
       (emp) => emp['EmployeeID'] == employeeId,
-      orElse: () => <String, dynamic>{'EmployeeID': '', 'EmployeeName': '未知員工'},
+      orElse: () => <String, dynamic>{'EmployeeID': '', 'EmployeeName': ''},
     );
-    return employee['EmployeeName']?.toString() ?? '未知員工';
+    return employee['EmployeeName']?.toString() ?? '';
+  }
+
+  String _getPatientName(String patientId) {
+    final patient = _patients.firstWhere(
+      (pat) => pat['PatientID'] == patientId,
+      orElse: () => <String, dynamic>{'PatientID': '', 'PatientName': ''},
+    );
+    return patient['PatientName']?.toString() ?? patientId; // 使用 PatientID 作為備用名稱
   }
 
   String _formatDateTime(String dateTimeStr) {
     try {
       final dateTime = DateTime.parse(dateTimeStr);
-      return '${dateTime.year}-${dateTime.month.toString().padLeft(2, '0')}-${dateTime.day.toString().padLeft(2, '0')} ${dateTime.hour.toString().padLeft(2, '0')}-${dateTime.minute.toString().padLeft(2, '0')}';
+      return '${dateTime.year}-${dateTime.month.toString().padLeft(2, '0')}-${dateTime.day.toString().padLeft(2, '0')} ${dateTime.hour.toString().padLeft(2, '0')}:${dateTime.minute.toString().padLeft(2, '0')}';
     } catch (e) {
       return dateTimeStr;
+    }
+  }
+
+  Future<void> _addMedicationRecord() async {
+    if (_appState.centerId == null) return;
+
+    try {
+      final employee = _employees.firstWhere((emp) => emp['EmployeeName'] == 'Dr. Emily',
+          orElse: () => <String, dynamic>{'EmployeeID': ''});
+      final employeeId = employee['EmployeeID'];
+      final patientId = '2133';
+      final type = '早餐後';
+      final describeMean = '新增2133的藥物';
+      final entryDatetime = DateTime.now().toIso8601String();
+
+      final sql = '''
+        INSERT INTO records (EmployeeID, PatientID, Type, EntryDatetime, DescribeMean, CenterID)
+        VALUES ('$employeeId', '$patientId', '$type', '$entryDatetime', '$describeMean', '${_appState.centerId}')
+      ''';
+
+      final response = await http.post(
+        Uri.parse('https://project.1114580.xyz/data'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'username': _appState.usernameController.text,
+          'password': _appState.passwordController.text,
+          'requestType': 'sql execute',
+          'data': {'sql': sql},
+        }),
+      );
+
+      if (response.statusCode == 200) {
+        _fetchRecords(isRefresh: true); // 刷新記錄
+      } else {
+        throw Exception('新增記錄失敗: ${response.statusCode}');
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _errorMessage = '新增記錄失敗: $e';
+        });
+      }
+    }
+  }
+
+  Future<void> _selectDate(BuildContext context) async {
+    final DateTime? picked = await showDatePicker(
+      context: context,
+      initialDate: _selectedDate ?? DateTime.now(),
+      firstDate: DateTime(2000),
+      lastDate: DateTime(2100),
+    );
+    if (picked != null && mounted) {
+      setState(() {
+        _selectedDate = picked;
+      });
+      _fetchRecords();
     }
   }
 
@@ -5318,6 +5443,12 @@ class _ReviewJournalScreenState extends State<ReviewJournalScreen> {
           title: const Text('審核日誌'),
           backgroundColor: Colors.grey[300],
           centerTitle: true,
+          actions: [
+            IconButton(
+              icon: const Icon(Icons.add),
+              onPressed: _addMedicationRecord,
+            ),
+          ],
         ),
         body: Column(
           children: [
@@ -5378,6 +5509,54 @@ class _ReviewJournalScreenState extends State<ReviewJournalScreen> {
                       optionsBuilder: (TextEditingValue textEditingValue) {
                         final input = textEditingValue.text.trim().toLowerCase();
                         if (input.isEmpty) {
+                          return _patients.map((pat) => pat['PatientName'] as String);
+                        }
+                        return _patients
+                            .map((pat) => pat['PatientName'] as String)
+                            .where((name) => name.toLowerCase().contains(input));
+                      },
+                      onSelected: (String selection) {
+                        final selectedPatient = _patients.firstWhere(
+                          (pat) => pat['PatientName'] == selection,
+                          orElse: () => <String, dynamic>{'PatientID': null},
+                        );
+                        setState(() {
+                          _selectedPatientId = selectedPatient['PatientID'];
+                        });
+                        _fetchRecords();
+                      },
+                      fieldViewBuilder: (context, controller, focusNode, onFieldSubmitted) {
+                        return TextField(
+                          controller: controller,
+                          focusNode: focusNode,
+                          decoration: InputDecoration(
+                            labelText: '篩選病患',
+                            border: const OutlineInputBorder(),
+                            suffixIcon: controller.text.isNotEmpty
+                                ? IconButton(
+                                    icon: const Icon(Icons.clear),
+                                    onPressed: () {
+                                      setState(() {
+                                        controller.clear();
+                                        _selectedPatientId = null;
+                                        FocusScope.of(context).unfocus();
+                                      });
+                                      _fetchRecords();
+                                    },
+                                  )
+                                : null,
+                          ),
+                          onSubmitted: (value) => onFieldSubmitted(),
+                        );
+                      },
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Autocomplete<String>(
+                      optionsBuilder: (TextEditingValue textEditingValue) {
+                        final input = textEditingValue.text.trim().toLowerCase();
+                        if (input.isEmpty) {
                           return _types;
                         }
                         return _types.where((type) => type.toLowerCase().contains(input));
@@ -5414,6 +5593,27 @@ class _ReviewJournalScreenState extends State<ReviewJournalScreen> {
                       },
                     ),
                   ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: GestureDetector(
+                      onTap: () => _selectDate(context),
+                      child: AbsorbPointer(
+                        child: TextField(
+                          controller: TextEditingController(
+                            text: _selectedDate == null
+                                ? ''
+                                : '${_selectedDate!.year}-${_selectedDate!.month.toString().padLeft(2, '0')}-${_selectedDate!.day.toString().padLeft(2, '0')}',
+                          ),
+                          decoration: InputDecoration(
+                            labelText: '篩選日期',
+                            border: const OutlineInputBorder(),
+                            suffixIcon: const Icon(Icons.calendar_today),
+                          ),
+                          readOnly: true,
+                        ),
+                      ),
+                    ),
+                  ),
                 ],
               ),
             ),
@@ -5435,6 +5635,7 @@ class _ReviewJournalScreenState extends State<ReviewJournalScreen> {
                                 }
                                 final record = _records[index];
                                 final employeeName = _getEmployeeName(record['EmployeeID']);
+                                final patientName = _getPatientName(record['PatientID']);
                                 final formattedDateTime = _formatDateTime(record['EntryDatetime']);
                                 return Card(
                                   key: ValueKey(record['EntryDatetime']),
