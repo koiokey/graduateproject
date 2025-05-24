@@ -11,14 +11,30 @@ import 'package:flutter/foundation.dart';
 import 'package:intl/intl.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:provider/provider.dart';
+import 'package:path_provider/path_provider.dart';
 import 'utils.dart';
+
 
 AppState appState = AppState();
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // 初始化 appState
+  final appState = AppState(); // 假設 AppState 有一個預設構造函數
   await appState.init();
+
+  // 初始化 DrugImageManager，使用 appState 的認證資訊
+  final drugImageManager = DrugImageManager();
+  await drugImageManager.initialize(
+    appState.usernameController.text,
+    appState.passwordController.text,
+  );
+
+  // 獲取可用攝影機
   final cameras = await availableCameras();
+
+  // 運行應用程式
   runApp(
     ChangeNotifierProvider(
       create: (_) => appState,
@@ -258,11 +274,16 @@ class _HomeScreenState extends State<HomeScreen> {
   final TextEditingController _pairCodeController = TextEditingController();
   int _currentPage = 0; // 0 for patients page, 1 for employee/journal page
 
- @override
-  void initState() {
+ void initState() {
     super.initState();
+    // 初始化 _appState
+    _appState = Provider.of<AppState>(context, listen: false);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
+        // 確保 username 和 password 有效
+        final username = _appState.usernameController.text;
+        final password = _appState.passwordController.text;
+        
         _fetchPatients();
         _fetchEmployees();
         // 從 AppState 恢復 _selectedEmployeeId
@@ -1843,19 +1864,26 @@ class _MedicineRecognitionScreenState extends State<MedicineRecognitionScreen> {
   void initState() {
     super.initState();
     _initializeCamera();
-     debugPrint('Selected Patient ID: ${appState.currentPatientId}');
+    debugPrint('Selected Patient ID: ${appState.currentPatientId}');
     if (appState.currentPatientId != null) {
       _fetchPatientMedications();
     }
-   
+  }
+
+  @override
+  void dispose() {
+    _cameraController?.dispose();
+    super.dispose();
   }
 
   Future<void> _initializeCamera() async {
     if (widget.cameras.isEmpty) {
-      setState(() {
-        _errorMessage = '找不到可用相機';
-        _isLoading = false;
-      });
+      if (mounted) {
+        setState(() {
+          _errorMessage = '找不到可用相機';
+          _isLoading = false;
+        });
+      }
       return;
     }
 
@@ -1867,21 +1895,23 @@ class _MedicineRecognitionScreenState extends State<MedicineRecognitionScreen> {
       );
 
       await _cameraController!.initialize();
-      // 設置自動對焦
       await _cameraController!.setFocusMode(FocusMode.auto);
-      // 禁用閃光燈
       await _cameraController!.setFlashMode(FlashMode.off);
       if (!mounted) return;
 
-      setState(() {
-        _isCameraInitialized = true;
-        _isLoading = false;
-      });
+      if (mounted) {
+        setState(() {
+          _isCameraInitialized = true;
+          _isLoading = false;
+        });
+      }
     } catch (e) {
-      setState(() {
-        _errorMessage = '相機初始化失敗: $e';
-        _isLoading = false;
-      });
+      if (mounted) {
+        setState(() {
+          _errorMessage = '相機初始化失敗: $e';
+          _isLoading = false;
+        });
+      }
     }
   }
 
@@ -1898,42 +1928,42 @@ class _MedicineRecognitionScreenState extends State<MedicineRecognitionScreen> {
   }
 
   Future<void> _setFocusPoint(Offset point, Size screenSize) async {
-  if (_cameraController == null || !_cameraController!.value.isInitialized) {
-    return;
-  }
-
-  if (!mounted) {
-    debugPrint('PrescriptionCaptureScreen is not mounted in _setFocusPoint');
-    return;
-  }
-
-  setState(() {
-    _focusPoint = point;
-    _isFocusing = true;
-  });
-
-  try {
-    final double x = point.dx / screenSize.width;
-    final double y = point.dy / screenSize.height;
-
-    await _cameraController!.setFocusPoint(Offset(x, y));
-    await _cameraController!.setExposurePoint(Offset(x, y));
-    await Future.delayed(Duration(milliseconds: 500));
-
-    if (mounted) {
-      setState(() {
-        _isFocusing = false;
-      });
+    if (_cameraController == null || !_cameraController!.value.isInitialized) {
+      return;
     }
-  } catch (e) {
-    debugPrint('設置對焦點失敗: $e');
-    if (mounted) {
-      setState(() {
-        _isFocusing = false;
-      });
+
+    if (!mounted) {
+      debugPrint('MedicineRecognitionScreen is not mounted in _setFocusPoint');
+      return;
+    }
+
+    setState(() {
+      _focusPoint = point;
+      _isFocusing = true;
+    });
+
+    try {
+      final double x = point.dx / screenSize.width;
+      final double y = point.dy / screenSize.height;
+
+      await _cameraController!.setFocusPoint(Offset(x, y));
+      await _cameraController!.setExposurePoint(Offset(x, y));
+      await Future.delayed(Duration(milliseconds: 500));
+
+      if (mounted) {
+        setState(() {
+          _isFocusing = false;
+        });
+      }
+    } catch (e) {
+      debugPrint('設置對焦點失敗: $e');
+      if (mounted) {
+        setState(() {
+          _isFocusing = false;
+        });
+      }
     }
   }
-}
 
   void showLoadingDialog(BuildContext context) {
     showDialog(
@@ -1965,157 +1995,56 @@ class _MedicineRecognitionScreenState extends State<MedicineRecognitionScreen> {
   }
 
   void hideLoadingDialog(BuildContext context) {
-    Navigator.of(context, rootNavigator: true).pop();
+    if (Navigator.canPop(context)) {
+      Navigator.of(context, rootNavigator: true).pop();
+    }
   }
 
- Future<String> _formatJson(Map<String, dynamic> responseData) async {
+  Future<String> _formatJson(Map<String, dynamic> responseData) async {
     return await compute((data) {
       return const JsonEncoder.withIndent('  ').convert(data);
     }, responseData);
   }
 
- Future<void> _takePictureAndAnalyze() async {
-  if (_cameraController == null || !_cameraController!.value.isInitialized) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('相機未初始化')),
-    );
-    return;
-  }
-
-  if (_isProcessing) return;
-
-  setState(() {
-    _isProcessing = true;
-  });
-
-  try {
-    await _cameraController!.setFocusMode(FocusMode.auto);
-    await _cameraController!.setFlashMode(FlashMode.off);
-
-    if (_focusPoint != null) {
-      final screenSize = MediaQuery.of(context).size;
-      await _setFocusPoint(_focusPoint!, screenSize);
-    }
-
-    await Future.delayed(Duration(milliseconds: 500));
-    showLoadingDialog(context);
-
-    final XFile picture = await _cameraController!.takePicture();
-    final bytes = await picture.readAsBytes();
-    final base64Image = base64Encode(bytes);
-
-    final response = await HttpClient.instance.post(
-      Uri.parse('https://project.1114580.xyz/data'),
-      headers: {'Content-Type': 'application/json'},
-      body: jsonEncode({
-        'username': widget.usernameController.text,
-        'password': widget.passwordController.text,
-        'requestType': 'Yolo',
-        'data': {'image': 'data:image/jpeg;base64,$base64Image'}
-      }),
-    );
-
-    if (response.statusCode == 200) {
-      final Map<String, dynamic> responseData = jsonDecode(response.body);
-      final List<Map<String, dynamic>> detections = (responseData['detections'] as List?)
-          ?.cast<Map<String, dynamic>>()
-          .toList() ?? [];
-      final String? annotatedImageBase64 = responseData['image'] as String?;
-
-      // 並行執行
-      final results = await Future.wait([
-        _compareMedications(detections),
-        _formatJson(responseData),
-      ]);
-
-      final String formattedJson = results[1] as String;
-
-      // 獲取 timing 值
-      final String timing = await _fetchPatientMedications();
-
-      hideLoadingDialog(context);
-
-      if (!mounted) return;
-      await Navigator.push(
-        context,
-        MaterialPageRoute(
-          builder: (context) => JsonResultScreen(
-            annotatedImageBase64: annotatedImageBase64,
-            jsonResponse: formattedJson,
-            detections: detections,
-            patientMedications: _patientMedications,
-            mismatchedMedications: _mismatchedMedications,
-            missingMedications: _missingMedications,
-            timing: timing, // 傳遞 timing
-          ),
-        ),
+  Future<void> _takePictureAndAnalyze() async {
+    if (_cameraController == null || !_cameraController!.value.isInitialized) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('相機未初始化')),
       );
-    } else {
-      throw Exception('伺服器返回錯誤: ${response.statusCode}');
-    }
-  } catch (e) {
-    hideLoadingDialog(context);
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('處理失敗: $e')),
-    );
-  } finally {
-    if (mounted) {
-      setState(() {
-        _isProcessing = false;
-        _focusPoint = null;
-      });
-    }
-  }
-}
-
- Future<void> _pickImageFromGallery() async {
-  if (appState.currentPatientName == null) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('請先在首頁選擇病患')),
-    );
-    return;
-  }
-
-  if (_isProcessing) return;
-
-  setState(() {
-    _isProcessing = true;
-  });
-
-  try {
-    final ImagePicker picker = ImagePicker();
-    final XFile? image = await picker.pickImage(source: ImageSource.gallery);
-
-    if (image == null) {
-      setState(() {
-        _isProcessing = false;
-      });
       return;
     }
 
-    final imageFile = File(image.path);
-    if (await imageFile.exists()) {
-      setState(() {
-        _selectedImage = imageFile;
-        _detections = [];
-      });
+    if (_isProcessing) return;
 
+    setState(() {
+      _isProcessing = true;
+    });
+
+    try {
+      await _cameraController!.setFocusMode(FocusMode.auto);
+      await _cameraController!.setFlashMode(FlashMode.off);
+
+      if (_focusPoint != null) {
+        final screenSize = MediaQuery.of(context).size;
+        await _setFocusPoint(_focusPoint!, screenSize);
+      }
+
+      await Future.delayed(Duration(milliseconds: 500));
       showLoadingDialog(context);
 
-      final imageBytes = await imageFile.readAsBytes();
-      final base64Image = base64Encode(imageBytes);
-
-      final jsonData = {
-        'username': widget.usernameController.text,
-        'password': widget.passwordController.text,
-        'requestType': 'Yolo',
-        'data': {'image': 'data:image/png;base64,$base64Image'},
-      };
+      final XFile picture = await _cameraController!.takePicture();
+      final bytes = await picture.readAsBytes();
+      final base64Image = base64Encode(bytes);
 
       final response = await HttpClient.instance.post(
         Uri.parse('https://project.1114580.xyz/data'),
         headers: {'Content-Type': 'application/json'},
-        body: jsonEncode(jsonData),
+        body: jsonEncode({
+          'username': widget.usernameController.text,
+          'password': widget.passwordController.text,
+          'requestType': 'Yolo',
+          'data': {'image': 'data:image/jpeg;base64,$base64Image'}
+        }),
       );
 
       if (response.statusCode == 200) {
@@ -2125,6 +2054,7 @@ class _MedicineRecognitionScreenState extends State<MedicineRecognitionScreen> {
             .toList() ?? [];
         final String? annotatedImageBase64 = responseData['image'] as String?;
 
+        // 並行執行
         final results = await Future.wait([
           _compareMedications(detections),
           _formatJson(responseData),
@@ -2138,7 +2068,7 @@ class _MedicineRecognitionScreenState extends State<MedicineRecognitionScreen> {
         hideLoadingDialog(context);
 
         if (!mounted) return;
-        Navigator.push(
+        await Navigator.push(
           context,
           MaterialPageRoute(
             builder: (context) => JsonResultScreen(
@@ -2148,168 +2078,360 @@ class _MedicineRecognitionScreenState extends State<MedicineRecognitionScreen> {
               patientMedications: _patientMedications,
               mismatchedMedications: _mismatchedMedications,
               missingMedications: _missingMedications,
-              timing: timing, // 傳遞 timing
+              timing: timing,
             ),
           ),
         );
       } else {
-        throw Exception('服務器返回錯誤: ${response.statusCode}');
+        throw Exception('伺服器返回錯誤: ${response.statusCode}');
       }
-    } else {
-      throw Exception('照片檔案不存在');
+    } catch (e) {
+      hideLoadingDialog(context);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('處理失敗: $e')),
+      );
+    } finally {
+      hideLoadingDialog(context);
+      if (mounted) {
+        setState(() {
+          _isProcessing = false;
+          _focusPoint = null;
+        });
+      }
     }
-  } catch (e) {
-    hideLoadingDialog(context);
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('傳送失敗: $e')),
-    );
-  } finally {
+  }
+
+  Future<void> _pickImageFromGallery() async {
+    if (appState.currentPatientName == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('請先在首頁選擇病患')),
+      );
+      return;
+    }
+
+    if (_isProcessing) {
+      debugPrint('處理中，無法選擇新照片');
+      return;
+    }
+
     setState(() {
-      _isProcessing = false;
-      _focusPoint = null;
+      _isProcessing = true;
     });
-  }
-}
 
- Future<String> _fetchPatientMedications() async {
-  if (appState.currentPatientId == null) {
-    debugPrint('患者 ID 為空，無法查詢藥物');
-    return ''; // 如果無患者 ID，返回空字符串
-  }
+    try {
+      final ImagePicker picker = ImagePicker();
+      final XFile? image = await picker.pickImage(source: ImageSource.gallery);
+      debugPrint('選擇照片: ${image?.path}');
 
-  final currentDate = DateTime.now();
-  final formattedCurrentDate =
-      "${currentDate.year}-${currentDate.month.toString().padLeft(2, '0')}-${currentDate.day.toString().padLeft(2, '0')}";
+      if (image == null) {
+        debugPrint('未選擇照片');
+        setState(() {
+          _isProcessing = false;
+        });
+        return;
+      }
 
-  if (_lastFetchedTiming == _selectedTiming &&
-      _lastFetchedDate == formattedCurrentDate &&
-      _patientMedications.isNotEmpty) {
-    debugPrint('使用緩存的患者藥物數據');
-    // 返回緩存的 Timing 值，根據 _selectedTiming 計算
-    final timeOfDay = _getTimeOfDay();
-    if (_selectedTiming == '睡前') {
-      return '睡前';
+      final imageFile = File(image.path);
+      if (await imageFile.exists()) {
+        setState(() {
+          _selectedImage = imageFile;
+          _detections = [];
+        });
+
+        debugPrint('顯示載入對話框');
+        showLoadingDialog(context);
+
+        final imageBytes = await imageFile.readAsBytes();
+        final base64Image = base64Encode(imageBytes);
+        debugPrint('照片轉換為 Base64 完成，長度: ${base64Image.length}');
+
+        final jsonData = {
+          'username': widget.usernameController.text,
+          'password': widget.passwordController.text,
+          'requestType': 'Yolo',
+          'data': {'image': 'data:image/png;base64,$base64Image'},
+        };
+
+        debugPrint('發送 HTTP 請求: $jsonData');
+        final response = await HttpClient.instance.post(
+          Uri.parse('https://project.1114580.xyz/data'),
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode(jsonData),
+        );
+
+        debugPrint('HTTP 回應狀態碼: ${response.statusCode}');
+        if (response.statusCode == 200) {
+          final Map<String, dynamic> responseData = jsonDecode(response.body);
+          debugPrint('回應資料: $responseData');
+
+          final List<Map<String, dynamic>> detections = (responseData['detections'] as List?)
+              ?.cast<Map<String, dynamic>>()
+              .toList() ?? [];
+          final String? annotatedImageBase64 = responseData['image'] as String?;
+          debugPrint('解析出 detections: $detections, annotatedImageBase64: ${annotatedImageBase64 != null}');
+
+          final results = await Future.wait([
+            _compareMedications(detections),
+            _formatJson(responseData),
+          ]);
+          debugPrint('並行任務完成');
+
+          final String formattedJson = results[1] as String;
+          debugPrint('格式化 JSON 完成: $formattedJson');
+
+          // 獲取 timing 值
+          final String timing = await _fetchPatientMedications();
+          debugPrint('獲取 timing: $timing');
+
+          if (!mounted) {
+            debugPrint('頁面已銷毀，無法導航到 JsonResultScreen');
+            return;
+          }
+
+          debugPrint('準備導航到 JsonResultScreen');
+          await Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (context) => JsonResultScreen(
+                annotatedImageBase64: annotatedImageBase64,
+                jsonResponse: formattedJson,
+                detections: detections,
+                patientMedications: _patientMedications,
+                mismatchedMedications: _mismatchedMedications,
+                missingMedications: _missingMedications,
+                timing: timing,
+              ),
+            ),
+          );
+          debugPrint('導航到 JsonResultScreen 完成');
+        } else {
+          throw Exception('服務器返回錯誤: ${response.statusCode}');
+        }
+      } else {
+        throw Exception('照片檔案不存在');
+      }
+    } catch (e, stackTrace) {
+      debugPrint('處理失敗: $e\n堆疊追蹤: $stackTrace');
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('傳送失敗: $e')),
+      );
+    } finally {
+      try {
+        debugPrint('關閉載入對話框');
+        hideLoadingDialog(context);
+      } catch (e) {
+        debugPrint('關閉載入對話框失敗: $e');
+      }
+      if (mounted) {
+        setState(() {
+          _isProcessing = false;
+          _focusPoint = null;
+        });
+      }
     }
-    final timingMap = {
-      '早上': {'飯前': '早餐前', '飯後': '早餐後'},
-      '中午': {'飯前': '中餐前', '飯後': '中餐後'},
-      '晚上': {'飯前': '晚餐前', '飯後': '晚餐後'},
-    };
-    return timingMap[timeOfDay]?[_selectedTiming] ?? '早餐前';
   }
 
-  try {
-    String timingCondition = '';
-    String timingValue = '';
-    final timeOfDay = _getTimeOfDay();
-    if (_selectedTiming == '睡前') {
-      timingCondition = "AND Timing = '睡前'";
-      timingValue = '睡前';
-    } else {
+  Future<Map<String, String>> _fetchDrugAppearances(List<String> drugIds) async {
+    if (drugIds.isEmpty) return {};
+
+    try {
+      final response = await HttpClient.instance.post(
+        Uri.parse('https://project.1114580.xyz/data'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'username': widget.usernameController.text,
+          'password': widget.passwordController.text,
+          'requestType': 'sql search',
+          'data': {
+            'sql': "SELECT DrugID, drugappearance FROM drugs WHERE DrugID IN (${drugIds.map((id) => "'$id'").join(',')})",
+          },
+        }),
+      );
+
+      debugPrint('Fetch DrugAppearance HTTP Response Status: ${response.statusCode}');
+      debugPrint('Fetch DrugAppearance HTTP Response Body: ${response.body}');
+
+      if (response.statusCode == 200) {
+        final List<dynamic> data = jsonDecode(response.body);
+        return Map.fromEntries(data.map((item) => MapEntry(
+              item['DrugID'].toString(),
+              item['drugappearance']?.toString() ?? '',
+            )));
+      }
+      return {};
+    } catch (e) {
+      debugPrint('Fetch DrugAppearance error: $e');
+      return {};
+    }
+  }
+
+  Future<String> _fetchPatientMedications() async {
+    if (appState.currentPatientId == null) {
+      debugPrint('患者 ID 為空，無法查詢藥物');
+      return '';
+    }
+
+    final currentDate = DateTime.now();
+    final formattedCurrentDate =
+        "${currentDate.year}-${currentDate.month.toString().padLeft(2, '0')}-${currentDate.day.toString().padLeft(2, '0')}";
+
+    if (_lastFetchedTiming == _selectedTiming &&
+        _lastFetchedDate == formattedCurrentDate &&
+        _patientMedications.isNotEmpty) {
+      debugPrint('使用緩存的患者藥物數據');
+      final timeOfDay = _getTimeOfDay();
+      if (_selectedTiming == '睡前') {
+        return '睡前';
+      }
       final timingMap = {
         '早上': {'飯前': '早餐前', '飯後': '早餐後'},
         '中午': {'飯前': '中餐前', '飯後': '中餐後'},
         '晚上': {'飯前': '晚餐前', '飯後': '晚餐後'},
       };
-      timingValue = timingMap[timeOfDay]?[_selectedTiming] ?? '早餐前';
-      timingCondition = "AND Timing = '$timingValue'";
+      return timingMap[timeOfDay]?[_selectedTiming] ?? '早餐前';
     }
 
-    final response = await HttpClient.instance.post(
-      Uri.parse('https://project.1114580.xyz/data'),
-      headers: {'Content-Type': 'application/json'},
-      body: jsonEncode({
-        "username": widget.usernameController.text,
-        "password": widget.passwordController.text,
-        "requestType": "sql search",
-        "data": {
-          "sql": """
-            SELECT d.DrugName, m.Dose
-            FROM (
-                  SELECT *
-                  FROM medications
-                  WHERE PatientID = '${appState.currentPatientId}'
-                    AND DATE_ADD(Added_Day, INTERVAL days DAY) >= '$formattedCurrentDate'
-                    $timingCondition
-                  ) m
-                  JOIN drugs d ON m.DrugID = d.DrugID
-                  JOIN (
-                      SELECT DrugID, MAX(Added_Day) AS Latest_Added_Day
-                      FROM medications
-                      WHERE PatientID = '${appState.currentPatientId}'
-                        AND DATE_ADD(Added_Day, INTERVAL days DAY) >= '$formattedCurrentDate'
-                      GROUP BY DrugID
-                  ) latest
-                  ON m.DrugID = latest.DrugID AND m.Added_Day = latest.Latest_Added_Day;
-          """
-        }
-      }),
-    );
+    try {
+      String timingCondition = '';
+      String timingValue = '';
+      final timeOfDay = _getTimeOfDay();
+      if (_selectedTiming == '睡前') {
+        timingCondition = "AND Timing = '睡前'";
+        timingValue = '睡前';
+      } else {
+        final timingMap = {
+          '早上': {'飯前': '早餐前', '飯後': '早餐後'},
+          '中午': {'飯前': '中餐前', '飯後': '中餐後'},
+          '晚上': {'飯前': '晚餐前', '飯後': '晚餐後'},
+        };
+        timingValue = timingMap[timeOfDay]?[_selectedTiming] ?? '早餐前';
+        timingCondition = "AND Timing = '$timingValue'";
+      }
 
-    if (response.statusCode == 200) {
-      final responseData = jsonDecode(response.body);
-      debugPrint('Medications API Response: $responseData');
-      if (responseData is List) {
-        setState(() {
-          _patientMedications = responseData
+      final response = await HttpClient.instance.post(
+        Uri.parse('https://project.1114580.xyz/data'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          "username": widget.usernameController.text,
+          "password": widget.passwordController.text,
+          "requestType": "sql search",
+          "data": {
+            "sql": """
+              SELECT d.DrugName, m.Dose, m.DrugID
+              FROM (
+                    SELECT *
+                    FROM medications
+                    WHERE PatientID = '${appState.currentPatientId}'
+                      AND DATE_ADD(Added_Day, INTERVAL days DAY) >= '$formattedCurrentDate'
+                      $timingCondition
+                    ) m
+                    JOIN drugs d ON m.DrugID = d.DrugID
+                    JOIN (
+                        SELECT DrugID, MAX(Added_Day) AS Latest_Added_Day
+                        FROM medications
+                        WHERE PatientID = '${appState.currentPatientId}'
+                          AND DATE_ADD(Added_Day, INTERVAL days DAY) >= '$formattedCurrentDate'
+                        GROUP BY DrugID
+                    ) latest
+                    ON m.DrugID = latest.DrugID AND m.Added_Day = latest.Latest_Added_Day;
+            """
+          }
+        }),
+      );
+
+      if (response.statusCode == 200) {
+        final responseData = jsonDecode(response.body);
+        debugPrint('Medications API Response: $responseData');
+        if (responseData is List) {
+          // 提取 DrugID 和其他資料
+          final medications = responseData
               .map((item) => {
                     'drugName': item['DrugName']?.toString().toLowerCase().trim() ?? '',
                     'dose': double.tryParse(item['Dose']?.toString() ?? '0') ?? 0,
+                    'DrugID': item['DrugID']?.toString() ?? '',
                   })
               .where((med) => med['drugName'] is String && (med['drugName'] as String).isNotEmpty)
               .toList();
-          _lastFetchedTiming = _selectedTiming;
-          _lastFetchedDate = formattedCurrentDate;
-        });
-        return timingValue; // 返回最終的 Timing 值（例如 '早餐前'）
-      } else {
-        throw Exception('無效的資料格式');
-      }
-    }
-    return timingValue; // 如果 API 回應失敗，返回計算的 timingValue
-  } catch (e) {
-    debugPrint('獲取患者藥物失敗: $e');
-    setState(() {
-      _errorMessage = '獲取藥物資料失敗: $e';
-    });
-    return ''; // 錯誤時返回空字符串
-  }
-}
 
-  Future<void> _compareMedications(List<Map<String, dynamic>> detections) async {
-    final detectedLabels = detections
-        .map((d) => d['label']?.toString().toLowerCase().trim())
-        .whereType<String>()
-        .toSet();
+          // 批量查詢 drugappearance
+          final drugIds = medications.map((med) => med['DrugID'] as String).toList();
+          final appearances = await _fetchDrugAppearances(drugIds);
 
-    final patientMedMap = {
-      for (var med in _patientMedications)
-        med['drugName'] as String: med['dose'] as double
-    };
-
-    setState(() {
-      _mismatchedMedications = detections
-          .where((d) {
-            final label = d['label']?.toString().toLowerCase().trim();
-            return label != null && !patientMedMap.containsKey(label);
-          })
-          .toList();
-
-      _missingMedications = patientMedMap.entries
-          .map((entry) {
-            final drugName = entry.key;
-            final expectedDose = entry.value;
-            final detectedCount = detectedLabels.where((label) => label == drugName).length;
-            final missingCount = expectedDose - detectedCount;
+          // 將 drugappearance 加入 medications
+          final updatedMedications = medications.map((med) {
+            final drugId = med['DrugID'] as String;
             return {
-              'drugName': drugName,
-              'missingCount': missingCount > 0.0 ? missingCount : 0.0,
+              ...med,
+              'drugappearance': appearances[drugId] ?? '',
             };
-          })
-          .where((med) => (med['missingCount'] as double) > 0)
-          .toList();
-    });
+          }).toList();
+
+          if (mounted) {
+            setState(() {
+              _patientMedications = updatedMedications;
+              _lastFetchedTiming = _selectedTiming;
+              _lastFetchedDate = formattedCurrentDate;
+            });
+          }
+          return timingValue;
+        } else {
+          throw Exception('無效的資料格式');
+        }
+      }
+      return timingValue;
+    } catch (e) {
+      debugPrint('獲取患者藥物失敗: $e');
+      if (mounted) {
+        setState(() {
+          _errorMessage = '獲取藥物資料失敗: $e';
+        });
+      }
+      return '';
+    }
   }
+
+ Future<void> _compareMedications(List<Map<String, dynamic>> detections) async {
+  final detectedLabels = detections
+      .map((d) => d['label']?.toString().toLowerCase().trim())
+      .whereType<String>()
+      .toSet();
+
+  final patientMedMap = {
+    for (var med in _patientMedications)
+      med['drugName'] as String: {
+        'dose': med['dose'] as double,
+        'DrugID': med['DrugID'] as String,
+        'drugappearance': med['drugappearance'] as String,
+      }
+  };
+
+  setState(() {
+    _mismatchedMedications = detections
+        .where((d) {
+          final label = d['label']?.toString().toLowerCase().trim();
+          return label != null && !patientMedMap.containsKey(label);
+        })
+        .toList();
+
+    _missingMedications = patientMedMap.entries
+        .map((entry) {
+          final drugName = entry.key;
+          final expectedDose = entry.value['dose'] as double;
+          final drugId = entry.value['DrugID'] as String;
+          final drugAppearance = entry.value['drugappearance'] as String;
+          final detectedCount = detectedLabels.where((label) => label == drugName).length;
+          final missingCount = expectedDose - detectedCount;
+          return {
+            'drugName': drugName,
+            'missingCount': missingCount > 0.0 ? missingCount : 0.0,
+            'DrugID': drugId,
+            'drugappearance': drugAppearance, // 直接加入 drugappearance
+          };
+        })
+        .where((med) => (med['missingCount'] as double) > 0)
+        .toList();
+  });
+}
 
   @override
   Widget build(BuildContext context) {
@@ -2400,7 +2522,7 @@ class _MedicineRecognitionScreenState extends State<MedicineRecognitionScreen> {
                       onChanged: (value) {
                         setState(() {
                           _selectedTiming = value;
-                          _fetchPatientMedications(); // 重新查詢藥物
+                          _fetchPatientMedications();
                         });
                       },
                     ),
@@ -2476,108 +2598,216 @@ class JsonResultScreen extends StatefulWidget {
 class _JsonResultScreenState extends State<JsonResultScreen> {
   bool _isUpdating = false;
 
-Future<void> _confirmMedications() async {
-  if (_isUpdating) return;
+  Future<void> _confirmMedications() async {
+    if (_isUpdating) return;
 
-  setState(() => _isUpdating = true);
-  try {
-    final patientId = appState.currentPatientId;
-    if (patientId == null) {
-      throw Exception('未選擇患者');
+    setState(() => _isUpdating = true);
+    try {
+      final patientId = appState.currentPatientId;
+      if (patientId == null) {
+        throw Exception('未選擇患者');
+      }
+
+      final employeeId = appState.currentEmployeeId;
+      if (employeeId == null) {
+        throw Exception('未選擇員工');
+      }
+
+      final currentDate = DateTime.now().toIso8601String().split('T')[0];
+
+      // 第一個 SQL：更新藥物狀態
+      final updateSql = '''
+        UPDATE medications
+        SET state = 1
+        WHERE PatientID = '$patientId'
+        AND DATE_ADD(Added_Day, INTERVAL days DAY) >= '$currentDate'
+        AND Timing = '${widget.timing}'
+      ''';
+
+      final updateJsonData = {
+        'username': appState.usernameController.text,
+        'password': appState.passwordController.text,
+        'requestType': 'sql update',
+        'data': {'sql': updateSql},
+      };
+
+      final formattedUpdateJson = const JsonEncoder.withIndent('  ').convert(updateJsonData);
+      debugPrint('Update Request JSON:\n$formattedUpdateJson');
+
+      final updateResponse = await HttpClient.instance.post(
+        Uri.parse('https://project.1114580.xyz/data'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode(updateJsonData),
+      );
+
+      debugPrint('Update HTTP Response Status Code: ${updateResponse.statusCode}');
+      debugPrint('Update HTTP Response Body: ${updateResponse.body}');
+
+      if (updateResponse.statusCode != 200) {
+        throw Exception('更新藥物狀態失敗: HTTP ${updateResponse.statusCode}, 訊息: ${updateResponse.body}');
+      }
+
+      // 第二個 SQL：插入記錄
+      final insertSql = '''
+        INSERT INTO records (EmployeeID, PatientID, Type, EntryDatetime, DescribeMean)
+        VALUES (
+          '$employeeId',
+          '$patientId',
+          'yolo',
+          NOW(),
+          '以檢查${widget.timing}要吃的部分'
+        )
+      ''';
+
+      final insertJsonData = {
+        'username': appState.usernameController.text,
+        'password': appState.passwordController.text,
+        'requestType': 'sql update',
+        'data': {'sql': insertSql},
+      };
+
+      final formattedInsertJson = const JsonEncoder.withIndent('  ').convert(insertJsonData);
+      debugPrint('Insert Request JSON:\n$formattedInsertJson');
+
+      final insertResponse = await HttpClient.instance.post(
+        Uri.parse('https://project.1114580.xyz/data'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode(insertJsonData),
+      );
+
+      debugPrint('Insert HTTP Response Status Code: ${insertResponse.statusCode}');
+      debugPrint('Insert HTTP Response Body: ${insertResponse.body}');
+
+      if (insertResponse.statusCode != 200) {
+        throw Exception('插入記錄失敗: HTTP ${insertResponse.statusCode}, 訊息: ${insertResponse.body}');
+      }
+
+      // 兩者都成功後顯示成功訊息並導航
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('藥物狀態更新成功')),
+      );
+      Navigator.pushNamedAndRemoveUntil(
+        context,
+        '/home',
+        (route) => false,
+      );
+      Provider.of<AppState>(context, listen: false).refreshHomeData();
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('更新失敗: $e')),
+      );
+    } finally {
+      setState(() => _isUpdating = false);
     }
-
-    final employeeId = appState.currentEmployeeId;
-    if (employeeId == null) {
-      throw Exception('未選擇員工');
-    }
-
-    final currentDate = DateTime.now().toIso8601String().split('T')[0];
-
-    // 第一個 SQL：更新藥物狀態
-    final updateSql = '''
-      UPDATE medications
-      SET state = 1
-      WHERE PatientID = '$patientId'
-      AND DATE_ADD(Added_Day, INTERVAL days DAY) >= '$currentDate'
-      AND Timing = '${widget.timing}'
-    ''';
-
-    final updateJsonData = {
-      'username': appState.usernameController.text,
-      'password': appState.passwordController.text,
-      'requestType': 'sql update',
-      'data': {'sql': updateSql},
-    };
-
-    final formattedUpdateJson = const JsonEncoder.withIndent('  ').convert(updateJsonData);
-    debugPrint('Update Request JSON:\n$formattedUpdateJson');
-
-    final updateResponse = await HttpClient.instance.post(
-      Uri.parse('https://project.1114580.xyz/data'),
-      headers: {'Content-Type': 'application/json'},
-      body: jsonEncode(updateJsonData),
-    );
-
-    debugPrint('Update HTTP Response Status Code: ${updateResponse.statusCode}');
-    debugPrint('Update HTTP Response Body: ${updateResponse.body}');
-
-    if (updateResponse.statusCode != 200) {
-      throw Exception('更新藥物狀態失敗: HTTP ${updateResponse.statusCode}, 訊息: ${updateResponse.body}');
-    }
-
-    // 第二個 SQL：插入記錄
-    final insertSql = '''
-      INSERT INTO records (EmployeeID, PatientID, Type, EntryDatetime, DescribeMean)
-      VALUES (
-        '$employeeId',
-        '$patientId',
-        'yolo',
-        NOW(),
-        '以檢查${widget.timing}要吃的部分'
-      )
-    ''';
-
-    final insertJsonData = {
-      'username': appState.usernameController.text,
-      'password': appState.passwordController.text,
-      'requestType': 'sql update',
-      'data': {'sql': insertSql},
-    };
-
-    final formattedInsertJson = const JsonEncoder.withIndent('  ').convert(insertJsonData);
-    debugPrint('Insert Request JSON:\n$formattedInsertJson');
-
-    final insertResponse = await HttpClient.instance.post(
-      Uri.parse('https://project.1114580.xyz/data'),
-      headers: {'Content-Type': 'application/json'},
-      body: jsonEncode(insertJsonData),
-    );
-
-    debugPrint('Insert HTTP Response Status Code: ${insertResponse.statusCode}');
-    debugPrint('Insert HTTP Response Body: ${insertResponse.body}');
-
-    if (insertResponse.statusCode != 200) {
-      throw Exception('插入記錄失敗: HTTP ${insertResponse.statusCode}, 訊息: ${insertResponse.body}');
-    }
-
-    // 兩者都成功後顯示成功訊息並導航
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('藥物狀態更新成功')),
-    );
-    Navigator.pushNamedAndRemoveUntil(
-      context,
-      '/home',
-      (route) => false,
-    );
-    Provider.of<AppState>(context, listen: false).refreshHomeData();
-  } catch (e) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('更新失敗: $e')),
-    );
-  } finally {
-    setState(() => _isUpdating = false);
   }
+
+  Future<void> _showDrugImageDialog(String drugName) async {
+  final drugImageManager = DrugImageManager();
+  debugPrint('Looking for image of $drugName');
+  debugPrint('Available drug image paths: ${drugImageManager.drugImagePaths}');
+
+  // 標準化大小寫，查找匹配的圖片路徑
+  String? imagePath = drugImageManager.drugImagePaths[drugName];
+  if (imagePath == null) {
+    final lowerCaseDrugName = drugName.toLowerCase();
+    imagePath = drugImageManager.drugImagePaths.entries
+        .firstWhere(
+          (entry) => entry.key.toLowerCase() == lowerCaseDrugName,
+          orElse: () => const MapEntry('', ''),
+        )
+        .value;
+    debugPrint('Normalized image path for $drugName: $imagePath');
+  }
+
+  // 檢查文件存在性
+  if (imagePath != null && imagePath.isNotEmpty) {
+    final file = File(imagePath);
+    final exists = await file.exists();
+    debugPrint('File exists at $imagePath: $exists');
+    if (exists) {
+      final length = await file.length();
+      debugPrint('File size: $length bytes');
+    } else {
+      debugPrint('File inaccessible or does not exist');
+    }
+  }
+
+  // 確保 UI 更新
+  if (mounted) {
+    setState(() {});
+  }
+
+  showDialog(
+    context: context,
+    builder: (context) => AlertDialog(
+      title: Text('藥物照片: $drugName'),
+      content: SizedBox(
+        width: double.maxFinite,
+        height: 200,
+        child: imagePath != null && imagePath.isNotEmpty && File(imagePath).existsSync()
+            ? Image.file(
+                File(imagePath),
+                fit: BoxFit.contain,
+                errorBuilder: (context, error, stackTrace) {
+                  debugPrint('Failed to load image at $imagePath: $error');
+                  return const Text('圖片載入失敗');
+                },
+              )
+            : Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Text('無照片可用'),
+                  const SizedBox(height: 16),
+                  ElevatedButton(
+                    onPressed: () => _uploadDrugImage(drugName),
+                    child: const Text('上傳照片'),
+                  ),
+                ],
+              ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('關閉'),
+        ),
+      ],
+    ),
+  );
 }
+
+  Future<void> _uploadDrugImage(String drugName) async {
+    final picker = ImagePicker();
+    final pickedFile = await picker.pickImage(source: ImageSource.gallery);
+
+    if (pickedFile == null) return;
+
+    final imageFile = File(pickedFile.path);
+    if (!await imageFile.exists()) return;
+
+    final directory = await getApplicationDocumentsDirectory();
+    final drugImagesDir = Directory('${directory.path}/drug_images');
+    if (!await drugImagesDir.exists()) {
+      await drugImagesDir.create(recursive: true);
+    }
+
+    final cleanDrugName = drugName.replaceAll(RegExp(r'[\/\\\?\*:"<>|]'), '_');
+    final newImageFile = File('${drugImagesDir.path}/$cleanDrugName.png');
+    await imageFile.copy(newImageFile.path);
+
+    final drugImageManager = DrugImageManager();
+    drugImageManager.drugImagePaths[cleanDrugName] = newImageFile.path;
+
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('drugImagePaths', jsonEncode(drugImageManager.drugImagePaths));
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('照片上傳成功')),
+    );
+
+    // 關閉對話框並重新顯示
+    Navigator.pop(context);
+    _showDrugImageDialog(drugName);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -2593,7 +2823,7 @@ Future<void> _confirmMedications() async {
                 borderRadius: BorderRadius.circular(8),
               ),
               child: Image.memory(
-               base64Decode(widget.annotatedImageBase64!.split(',').last),
+                base64Decode(widget.annotatedImageBase64!.split(',').last),
                 fit: BoxFit.contain,
                 errorBuilder: (context, error, stackTrace) {
                   return const Center(child: Text('圖片載入失敗'));
@@ -2615,114 +2845,120 @@ Future<void> _confirmMedications() async {
       ),
     );
   }
-  Widget _buildComparisonResult() {
-    // Create a combined list of medications, prioritizing missing medications
-    final combinedMedications = <Map<String, dynamic>>[];
-    final missingDrugNames = widget.missingMedications.map((med) => med['drugName']?.toString()).toSet();
 
-    // Add missing medications first
-    combinedMedications.addAll(widget.missingMedications.map((med) => {
-          'drugName': med['drugName'],
-          'missingCount': med['missingCount'],
-          'isMissing': true,
-        }));
+ Widget _buildComparisonResult() {
+  final combinedMedications = <Map<String, dynamic>>[];
+  final missingDrugNames = widget.missingMedications.map((med) => med['drugName']?.toString()).toSet();
 
-    // Add patient medications that are not in missing medications
-      combinedMedications.addAll(widget.patientMedications
-        .where((med) => !missingDrugNames.contains(med['drugName']?.toString()))
-        .map((med) {
-      // Parse dose as double
-      double? dose;
-      final rawDose = med['dose'];
-      if (rawDose is num) {
-        dose = rawDose.toDouble();
-      }
-      // Format dose for display
-      final formattedDose = dose != null
-          ? (dose == dose.floorToDouble() ? dose.toDouble().toString() : dose.toStringAsFixed(2))
-          : '未知';
-      return {
+  // 處理缺少的藥物
+  combinedMedications.addAll(widget.missingMedications.map((med) => {
         'drugName': med['drugName'],
-        'dose': formattedDose,
-        'rawDose': dose, // Store raw double value if needed
-        'isMissing': false,
-      };
-    }));
+        'missingCount': med['missingCount'],
+        'drugappearance': med['drugappearance'] ?? '', // 使用提前加入的 drugappearance
+        'isMissing': true,
+      }));
 
-    return Column(
-      children: [
-        // 照片有但患者不應服用的藥物
-        if (widget.mismatchedMedications.isNotEmpty) ...[
-          const Padding(
-            padding: EdgeInsets.all(8.0),
-            child: Text(
-              '不應該出現在照片裡的藥物:',
-              style: TextStyle(
-                fontWeight: FontWeight.bold,
-                fontSize: 16,
-                color: Colors.red,
-              ),
+  // 處理患者藥物，排除已標記為缺少的藥物
+  combinedMedications.addAll(widget.patientMedications
+      .where((med) => !missingDrugNames.contains(med['drugName']?.toString()))
+      .map((med) {
+    double? dose;
+    final rawDose = med['dose'];
+    if (rawDose is num) {
+      dose = rawDose.toDouble();
+    }
+    final formattedDose = dose != null
+        ? (dose == dose.floorToDouble() ? dose.toDouble().toString() : dose.toStringAsFixed(2))
+        : '未知';
+    return {
+      'drugName': med['drugName'],
+      'dose': formattedDose,
+      'rawDose': dose,
+      'drugappearance': med['drugappearance'] ?? '',
+      'isMissing': false,
+    };
+  }));
+
+  return Column(
+    children: [
+      if (widget.mismatchedMedications.isNotEmpty) ...[
+        const Padding(
+          padding: EdgeInsets.all(8.0),
+          child: Text(
+            '不應該出現在照片裡的藥物:',
+            style: TextStyle(
+              fontWeight: FontWeight.bold,
+              fontSize: 16,
+              color: Colors.red,
             ),
           ),
-          ...widget.mismatchedMedications.map((med) => ListTile(
-                leading: const Icon(Icons.warning, color: Colors.orange),
-                title: Text(med['label']?.toString() ?? '未知標籤'),
-                subtitle: Text('置信度: ${(med['confidence'] * 100).toStringAsFixed(2)}%'),
-              )),
-          const Divider(),
-        ],
-
-        // 患者藥物狀態列表
-        Padding(
-          padding: const EdgeInsets.all(8.0),
-          child: Text(
-            '患者藥物狀態 (${combinedMedications.length}種):',
-            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
-          ),
         ),
-        if (combinedMedications.isNotEmpty)
-          ...combinedMedications.map((med) => ListTile(
-                leading: med['isMissing']
-                    ? const Icon(Icons.cancel, color: Colors.red)
-                    : const Icon(Icons.check_circle, color: Colors.green),
-                title: Text(med['drugName']?.toString() ?? '未知藥物'),
-                subtitle: Text(med['isMissing']
+        ...widget.mismatchedMedications.map((med) => ListTile(
+              leading: const Icon(Icons.warning, color: Colors.orange),
+              title: Text(med['label']?.toString() ?? '未知標籤'),
+              subtitle: Text('置信度: ${(med['confidence'] * 100).toStringAsFixed(2)}%'),
+            )),
+        const Divider(),
+      ],
+      Padding(
+        padding: const EdgeInsets.all(8.0),
+        child: Text(
+          '患者藥物狀態 (${combinedMedications.length}種):',
+          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+        ),
+      ),
+      if (combinedMedications.isNotEmpty)
+        ...combinedMedications.map((med) {
+          final drugAppearance = med['drugappearance'] as String?;
+          return ListTile(
+            onLongPress: () => _showDrugImageDialog(med['drugName']?.toString() ?? ''),
+            leading: med['isMissing']
+                ? const Icon(Icons.cancel, color: Colors.red)
+                : const Icon(Icons.check_circle, color: Colors.green),
+            title: Text(med['drugName']?.toString() ?? '未知藥物'),
+            subtitle: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(med['isMissing']
                     ? '缺少數量: ${med['missingCount']}顆'
                     : '劑量: ${med['dose']}顆'),
-              ))
-        else
-          const Padding(
-            padding: EdgeInsets.symmetric(horizontal: 16.0, vertical: 8),
-            child: Text(
-              '無藥物數據',
-              style: TextStyle(color: Colors.grey, fontSize: 14),
+                if (drugAppearance != null && drugAppearance.isNotEmpty)
+                  Text('藥物外觀: $drugAppearance'),
+              ],
             ),
-          ),
-        const Divider(),
-
-        // 添加「確認完畢」按鈕
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 16.0),
-          child: ElevatedButton(
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.blue[400],
-              minimumSize: const Size(double.infinity, 50),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(10),
-              ),
-            ),
-            onPressed: _isUpdating ? null : _confirmMedications,
-            child: _isUpdating
-                ? const CircularProgressIndicator(color: Colors.white)
-                : const Text(
-                    '確認完畢',
-                    style: TextStyle(fontSize: 18, color: Colors.white),
-                  ),
+          );
+        })
+      else
+        const Padding(
+          padding: EdgeInsets.symmetric(horizontal: 16.0, vertical: 8),
+          child: Text(
+            '無藥物數據',
+            style: TextStyle(color: Colors.grey, fontSize: 14),
           ),
         ),
-      ],
-    );
-  }
+      const Divider(),
+      Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 16.0),
+        child: ElevatedButton(
+          style: ElevatedButton.styleFrom(
+            backgroundColor: Colors.blue[400],
+            minimumSize: const Size(double.infinity, 50),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(10),
+            ),
+          ),
+          onPressed: _isUpdating ? null : _confirmMedications,
+          child: _isUpdating
+              ? const CircularProgressIndicator(color: Colors.white)
+              : const Text(
+                  '確認完畢',
+                  style: TextStyle(fontSize: 18, color: Colors.white),
+                ),
+        ),
+      ),
+    ],
+  );
+}
 }
 
 //看患者吃的藥有哪些
@@ -2741,12 +2977,12 @@ class _PatientManagementScreenState extends State<PatientManagementScreen> {
 
   final List<String> _timingOptions = [
     '全部',
-    '早餐後',
-    '中餐後',
-    '晚餐後',
     '早餐前',
     '中餐前',
     '晚餐前',
+    '早餐後',
+    '中餐後',
+    '晚餐後',
     '睡前',
   ];
 
@@ -2757,100 +2993,116 @@ class _PatientManagementScreenState extends State<PatientManagementScreen> {
   }
 
   void _loadArguments() {
-    
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      final args = ModalRoute.of(context)?.settings.arguments;
-      if (args is Map<String, dynamic>) {
+  WidgetsBinding.instance.addPostFrameCallback((_) {
+    if (!mounted) return; // 確保 widget 仍存在
+    final args = ModalRoute.of(context)?.settings.arguments;
+    if (args is Map<String, dynamic>) {
+      if (mounted) {
         setState(() {
           _selectedPatientName = args['patientName']?.toString();
           _selectedPatientId = args['patientId']?.toString();
         });
-        _fetchMedications();
-      } else {
+      }
+      _fetchMedications();
+    } else {
+      if (mounted) {
         setState(() {
           _isLoading = false;
           _errorMessage = '無效的患者資料';
         });
       }
-    });
-  }
-
-  Future<void> _fetchMedications() async {
-    if (_selectedPatientId == null) {
+    }
+  });
+}@override
+void dispose() {
+  super.dispose();
+}
+ Future<void> _fetchMedications() async {
+  if (_selectedPatientId == null) {
+    if (mounted) {
       setState(() {
         _isLoading = false;
         _errorMessage = '未選擇患者';
       });
-      return;
     }
+    return;
+  }
 
+  if (mounted) {
     setState(() {
       _isLoading = true;
       _errorMessage = null;
     });
+  }
 
-    try {
-      final currentDate = DateTime.now();
-      final formattedCurrentDate = "${currentDate.year}-${currentDate.month.toString().padLeft(2, '0')}-${currentDate.day.toString().padLeft(2, '0')}";
+  try {
+    final currentDate = DateTime.now();
+    final formattedCurrentDate = "${currentDate.year}-${currentDate.month.toString().padLeft(2, '0')}-${currentDate.day.toString().padLeft(2, '0')}";
 
-      String timingCondition = '';
-      if (_selectedTiming != '全部') {
-        final sanitizedTiming = _selectedTiming!.replaceAll("'", "''");
-        timingCondition = "AND m.Timing = '$sanitizedTiming'";
-      }
+    String timingCondition = '';
+    if (_selectedTiming != '全部') {
+      final sanitizedTiming = _selectedTiming!.replaceAll("'", "''");
+      timingCondition = "AND m.Timing = '$sanitizedTiming'";
+    }
 
-      final response = await HttpClient.instance.post(
-        Uri.parse('https://project.1114580.xyz/data'),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({
-          'username': appState.usernameController.text,
-          'password': appState.passwordController.text,
-          'requestType': 'sql search',
-          'data': {
-            'sql': """
-              SELECT m.PatientID, m.Added_Day, d.DrugName, m.Timing, m.Dose, m.DrugID, m.days, DATEDIFF(DATE_ADD(m.Added_Day, INTERVAL m.days DAY), CURRENT_DATE) - 1 AS DaysRemaining
-              FROM medications m
-              INNER JOIN drugs d ON m.DrugID = d.DrugID
-              INNER JOIN (
-                  SELECT DrugID, MAX(Added_Day) AS Latest_Added_Day
-                  FROM medications
-                  WHERE PatientID = '$_selectedPatientId'
-                  GROUP BY DrugID
-              ) latest ON m.DrugID = latest.DrugID AND m.Added_Day = latest.Latest_Added_Day
-              WHERE m.PatientID = '$_selectedPatientId'
-              AND DATE_ADD(Added_Day, INTERVAL days DAY) >= '$formattedCurrentDate'
-              $timingCondition
-            """
-          },
-        }),
-      );
+    final response = await HttpClient.instance.post(
+      Uri.parse('https://project.1114580.xyz/data'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({
+        'username': appState.usernameController.text,
+        'password': appState.passwordController.text,
+        'requestType': 'sql search',
+        'data': {
+          'sql': """
+            SELECT m.PatientID, m.Added_Day, d.DrugName, m.Timing, m.Dose, m.DrugID, m.days, DATEDIFF(DATE_ADD(m.Added_Day, INTERVAL m.days DAY), CURRENT_DATE) - 1 AS DaysRemaining
+            FROM medications m
+            INNER JOIN drugs d ON m.DrugID = d.DrugID
+            INNER JOIN (
+                SELECT DrugID, MAX(Added_Day) AS Latest_Added_Day
+                FROM medications
+                WHERE PatientID = '$_selectedPatientId'
+                GROUP BY DrugID
+            ) latest ON m.DrugID = latest.DrugID AND m.Added_Day = latest.Latest_Added_Day
+            WHERE m.PatientID = '$_selectedPatientId'
+            AND DATE_ADD(Added_Day, INTERVAL days DAY) >= '$formattedCurrentDate'
+            $timingCondition
+          """
+        },
+      }),
+    );
 
-      if (response.statusCode == 200) {
-        final data = jsonDecode(response.body);
-        if (data is List) {
+    if (response.statusCode == 200) {
+      final data = jsonDecode(response.body);
+      if (data is List) {
+        if (mounted) {
           setState(() {
             _medications = List<Map<String, dynamic>>.from(data);
             _isLoading = false;
           });
-        } else {
-          throw Exception('資料格式錯誤');
         }
       } else {
-        throw Exception('伺服器錯誤: ${response.statusCode}');
+        throw Exception('資料格式錯誤');
       }
-    } catch (e) {
+    } else {
+      throw Exception('伺服器錯誤: ${response.statusCode}');
+    }
+  } catch (e) {
+    if (mounted) {
       setState(() {
         _isLoading = false;
         _errorMessage = '錯誤: $e';
       });
     }
   }
+}
 
- Future<void> _deleteMedication(String drugId, String addedDay, String timing, String drugName) async {
-  setState(() {
-    _isLoading = true;
-    _errorMessage = null;
-  });
+Future<void> _deleteMedication(String drugId, String addedDay, String timing, String drugName) async {
+  if (mounted) {
+    setState(() {
+      _isLoading = true;
+      _errorMessage = null;
+    });
+  }
 
   final patientId = appState.currentPatientId;
   final employeeId = appState.currentEmployeeId;
@@ -2860,11 +3112,9 @@ class _PatientManagementScreenState extends State<PatientManagementScreen> {
   }
 
   try {
-    // 格式化日期
     final parsedDateTime = DateTime.parse(addedDay);
     final formattedDateTime = DateFormat('yyyy-MM-dd').format(parsedDateTime);
 
-    // 構建描述
     final describeMean = '將$_selectedPatientName於$formattedDateTime$timing的$drugName刪除';
 
     final response = await HttpClient.instance.post(
@@ -2903,10 +3153,12 @@ class _PatientManagementScreenState extends State<PatientManagementScreen> {
       throw Exception('刪除失敗: ${response.statusCode}');
     }
   } catch (e) {
-    setState(() {
-      _isLoading = false;
-      _errorMessage = '錯誤: $e';
-    });
+    if (mounted) {
+      setState(() {
+        _isLoading = false;
+        _errorMessage = '錯誤: $e';
+      });
+    }
   }
 }
 
@@ -2917,10 +3169,12 @@ Future<void> _updateMedication({
   required String dose,
   required String days,
 }) async {
-  setState(() {
-    _isLoading = true;
-    _errorMessage = null;
-  });
+  if (mounted) {
+    setState(() {
+      _isLoading = true;
+      _errorMessage = null;
+    });
+  }
 
   final patientId = appState.currentPatientId;
   final employeeId = appState.currentEmployeeId;
@@ -2934,7 +3188,6 @@ Future<void> _updateMedication({
     final sanitizedDose = dose.replaceAll("'", "''");
     final sanitizedDays = days.replaceAll("'", "''");
 
-    // 格式化日期
     final parsedDateTime = DateTime.parse(addedDay);
     final formattedDateTime = DateFormat('yyyy-MM-dd').format(parsedDateTime);
 
@@ -2961,7 +3214,6 @@ Future<void> _updateMedication({
         final originalDays = originalMedication['days'].toString();
         final drugName = originalMedication['DrugName']?.toString() ?? '未知藥物';
 
-        // 判斷修改類型並生成描述
         if (originalDose != dose && originalDays == days) {
           describeMean = '將$_selectedPatientName於$formattedDateTime$timing$drugName的劑量從$originalDose修改成$dose';
         } else if (originalDose == dose && originalDays != days) {
@@ -3024,10 +3276,12 @@ Future<void> _updateMedication({
       throw Exception('更新失敗: ${response.statusCode}');
     }
   } catch (e) {
-    setState(() {
-      _isLoading = false;
-      _errorMessage = '錯誤: $e';
-    });
+    if (mounted) {
+      setState(() {
+        _isLoading = false;
+        _errorMessage = '錯誤: $e';
+      });
+    }
   }
 }
 
@@ -3849,23 +4103,11 @@ class _PrescriptionResultScreenState extends State<PrescriptionResultScreen> {
   String? _cachedUsername;
   String? _cachedPassword;
   final Debouncer _saveDebouncer = Debouncer(Duration(milliseconds: 500));
+  Map<String, Map<String, dynamic>> _verificationCache = {}; // 快取驗證結果
 
   final List<String> _usageOptions = [
-    '早餐前',
-    '中餐前',
-    '晚餐前',
-    '早餐前,中餐前',
-    '早餐前,晚餐前',
-    '中餐前,晚餐前',
-    '早餐前,中餐前,晚餐前',
-    '早餐後',
-    '中餐後',
-    '晚餐後',
-    '早餐後,中餐後',
-    '早餐後,晚餐後',
-    '中餐後,晚餐後',
-    '早餐後,中餐後,晚餐後',
-    '睡前',
+    '早餐前', '中餐前', '晚餐前', '早餐前,中餐前', '早餐前,晚餐前', '中餐前,晚餐前', '早餐前,中餐前,晚餐前',
+    '早餐後', '中餐後', '晚餐後', '早餐後,中餐後', '早餐後,晚餐後', '中餐後,晚餐後', '早餐後,中餐後,晚餐後', '睡前',
   ];
 
   @override
@@ -3874,9 +4116,7 @@ class _PrescriptionResultScreenState extends State<PrescriptionResultScreen> {
     _syncAuthData();
     _checkLoginStatus();
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) {
-        _parseJsonResponse();
-      }
+      if (mounted) _parseJsonResponse();
     });
   }
 
@@ -3902,9 +4142,7 @@ class _PrescriptionResultScreenState extends State<PrescriptionResultScreen> {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) {
           Navigator.pushReplacementNamed(context, '/login');
-          _scaffoldMessenger?.showSnackBar(
-            SnackBar(content: Text('請先登錄')),
-          );
+          _scaffoldMessenger?.showSnackBar(const SnackBar(content: Text('請先登錄')));
         }
       });
     }
@@ -3924,24 +4162,16 @@ class _PrescriptionResultScreenState extends State<PrescriptionResultScreen> {
   void _parseJsonResponse() {
     try {
       var jsonData = jsonDecode(widget.jsonResponse);
-      if (jsonData is String) {
-        jsonData = jsonDecode(jsonData);
-      }
-      if (jsonData is! Map<String, dynamic>) {
-        throw Exception('JSON 格式錯誤');
-      }
+      if (jsonData is String) jsonData = jsonDecode(jsonData);
+      if (jsonData is! Map<String, dynamic>) throw Exception('JSON 格式錯誤');
 
       String usageText = '';
       final usage = jsonData['usage'];
-      if (usage is List<dynamic>) {
-        usageText = usage.map((e) => e?.toString() ?? '').join(',');
-      } else if (usage is String) {
-        usageText = usage;
-      } else if (usage != null) {
-        usageText = usage.toString();
-      }
+      if (usage is List<dynamic>) usageText = usage.map((e) => e?.toString() ?? '').join(',');
+      else if (usage is String) usageText = usage;
+      else if (usage != null) usageText = usage.toString();
 
-      final validTimes = ['早餐前', '中餐前', '晚餐前','早餐後', '中餐後', '晚餐後', '睡前'];
+      final validTimes = ['早餐前', '中餐前', '晚餐前', '早餐後', '中餐後', '晚餐後', '睡前'];
       final usageParts = usageText
           .split(',')
           .map((e) => e.trim())
@@ -3949,7 +4179,7 @@ class _PrescriptionResultScreenState extends State<PrescriptionResultScreen> {
           .toList();
       usageText = usageParts.join(',');
 
-      String? matchedOption = _usageOptions.contains(usageText) ? usageText : null;
+      final matchedOption = _usageOptions.contains(usageText) ? usageText : null;
 
       if (mounted) {
         setState(() {
@@ -3978,144 +4208,99 @@ class _PrescriptionResultScreenState extends State<PrescriptionResultScreen> {
     return input.replaceAll("'", "''").replaceAll(';', '').replaceAll('--', '');
   }
 
- Future<Map<String, dynamic>?> _verifyPatientAndDrug(String patientName, String drugName) async {
-  try {
-    final sanitizedPatientName = _sanitizeInput(patientName);
-    final sanitizedDrugName = _sanitizeInput(drugName);
+  Future<Map<String, dynamic>?> _verifyPatientAndDrug(String patientName, String drugName) async {
+    final cacheKey = '$patientName|$drugName';
+    if (_verificationCache.containsKey(cacheKey)) return _verificationCache[cacheKey];
 
-    // 主查詢：直接查詢 patients 和 drugs 表
-    final sql = """
-      SELECT 
-        p.PatientID AS patient_id,
-        d.DrugID AS drug_id
-      FROM patients p, drugs d
-      WHERE TRIM(LOWER(p.PatientName)) = '$sanitizedPatientName'
-      AND TRIM(LOWER(d.DrugName)) = '$sanitizedDrugName'
-    """;
+    try {
+      final sanitizedPatientName = _sanitizeInput(patientName);
+      final sanitizedDrugName = _sanitizeInput(drugName);
 
-    print('Executing SQL: $sql');
-    print('Sanitized PatientName: $sanitizedPatientName');
-    print('Sanitized DrugName: $sanitizedDrugName');
+      final sql = """
+        SELECT p.PatientID AS patient_id, d.DrugID AS drug_id
+        FROM patients p, drugs d
+        WHERE TRIM(LOWER(p.PatientName)) = '$sanitizedPatientName'
+        AND TRIM(LOWER(d.DrugName)) = '$sanitizedDrugName'
+      """;
 
-    final response = await HttpClient.instance.post(
-      Uri.parse('https://project.1114580.xyz/data'),
-      headers: {'Content-Type': 'application/json'},
-      body: jsonEncode({
-        'username': _cachedUsername,
-        'password': _cachedPassword,
-        'requestType': 'sql search',
-        'data': {'sql': sql}
-      }),
-    );
+      final response = await HttpClient.instance.post(
+        Uri.parse('https://project.1114580.xyz/data'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'username': _cachedUsername,
+          'password': _cachedPassword,
+          'requestType': 'sql search',
+          'data': {'sql': sql}
+        }),
+      );
 
-    print('Response status: ${response.statusCode}');
-    print('Response body: ${response.body}');
+      if (response.statusCode != 200) return null;
 
-    if (response.statusCode != 200) {
-      print('Non-200 response: ${response.statusCode}');
+      final data = jsonDecode(response.body);
+      if (data is List && data.isNotEmpty && data[0] is Map<String, dynamic>) {
+        final result = data[0];
+        if (result['patient_id'] != null && result['drug_id'] != null) {
+          _verificationCache[cacheKey] = {
+            'patient_id': result['patient_id'],
+            'drug_id': result['drug_id']
+          };
+          return _verificationCache[cacheKey];
+        }
+      } else if (data is Map<String, dynamic> && data['patient_id'] != null && data['drug_id'] != null) {
+        _verificationCache[cacheKey] = {
+          'patient_id': data['patient_id'],
+          'drug_id': data['drug_id']
+        };
+        return _verificationCache[cacheKey];
+      }
+      return null;
+    } catch (e) {
       return null;
     }
-
-    final data = jsonDecode(response.body);
-    print('Parsed data: $data');
-
-    // 處理可能的回應格式
-    if (data is List && data.isNotEmpty && data[0] is Map<String, dynamic>) {
-      final result = data[0];
-      if (result['patient_id'] != null && result['drug_id'] != null) {
-        return {
-          'patient_id': result['patient_id'],
-          'drug_id': result['drug_id']
-        };
-      }
-    } else if (data is Map<String, dynamic> && data['patient_id'] != null && data['drug_id'] != null) {
-      return {
-        'patient_id': data['patient_id'],
-        'drug_id': data['drug_id']
-      };
-    }
-
-    // 備用查詢：如果主查詢失敗，嘗試單獨查詢 drugs 表
-    final fallbackSql = """
-      SELECT DrugID, DrugName
-      FROM drugs
-      WHERE TRIM(LOWER(DrugName)) = '$sanitizedDrugName'
-    """;
-
-    print('Executing fallback SQL: $fallbackSql');
-
-    final fallbackResponse = await HttpClient.instance.post(
-      Uri.parse('https://project.1114580.xyz/data'),
-      headers: {'Content-Type': 'application/json'},
-      body: jsonEncode({
-        'username': _cachedUsername,
-        'password': _cachedPassword,
-        'requestType': 'sql search',
-        'data': {'sql': fallbackSql}
-      }),
-    );
-
-    print('Fallback response status: ${fallbackResponse.statusCode}');
-    print('Fallback response body: ${fallbackResponse.body}');
-
-    if (fallbackResponse.statusCode == 200) {
-      final fallbackData = jsonDecode(fallbackResponse.body);
-      print('Fallback parsed data: $fallbackData');
-      if (fallbackData is List && fallbackData.isNotEmpty) {
-        print('Found DrugName in fallback: ${fallbackData[0]['DrugName']}');
-      }
-    }
-
-    return null;
-  } catch (e, stackTrace) {
-    print('Error in _verifyPatientAndDrug: $e');
-    print('Stack trace: $stackTrace');
-    return null;
   }
-}
 
-Future<String?> _checkSimilarDrugName(String inputDrugName) async {
-  try {
-    final sanitizedDrugName = _sanitizeInput(inputDrugName);
-    final sql = """
-      SELECT DrugName
-      FROM drugs
-      WHERE levenshtein_enhanced(DrugName, '$sanitizedDrugName') <= 2
-      AND DrugName != '$sanitizedDrugName'
-      LIMIT 1
-    """;
+  Future<String?> _checkSimilarDrugName(String inputDrugName) async {
+    try {
+      final sanitizedDrugName = _sanitizeInput(inputDrugName);
+      final sql = """
+        SELECT DrugName
+        FROM drugs
+        WHERE levenshtein_enhanced(DrugName, '$sanitizedDrugName') <= 2
+        AND DrugName != '$sanitizedDrugName'
+        LIMIT 1
+      """;
 
-    final response = await HttpClient.instance.post(
-      Uri.parse('https://project.1114580.xyz/data'),
-      headers: {'Content-Type': 'application/json'},
-      body: jsonEncode({
-        'username': _cachedUsername,
-        'password': _cachedPassword,
-        'requestType': 'sql search',
-        'data': {'sql': sql}
-      }),
-    );
+      final response = await HttpClient.instance.post(
+        Uri.parse('https://project.1114580.xyz/data'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'username': _cachedUsername,
+          'password': _cachedPassword,
+          'requestType': 'sql search',
+          'data': {'sql': sql}
+        }),
+      );
 
-    if (response.statusCode != 200) return null;
+      if (response.statusCode != 200) return null;
 
-    final responseData = jsonDecode(response.body);
-    if (responseData is List && responseData.isNotEmpty) {
-      return responseData[0]['DrugName']?.toString();
+      final responseData = jsonDecode(response.body);
+      if (responseData is List && responseData.isNotEmpty) {
+        return responseData[0]['DrugName']?.toString();
+      }
+      return null;
+    } catch (e) {
+      return null;
     }
-    return null;
-  } catch (e) {
-    return null;
   }
-}
 
   Future<bool> _addDrugToDatabase(String drugName, String drugAppearance) async {
     try {
-     final sanitizedDrugName = _sanitizeInput(drugName);
-    final sanitizedDrugAppearance = _sanitizeInput(drugAppearance);
-    final sql = """
-      INSERT INTO drugs (DrugName, DrugAppearance)
-      VALUES ('$sanitizedDrugName', '$sanitizedDrugAppearance');
-    """;
+      final sanitizedDrugName = _sanitizeInput(drugName);
+      final sanitizedDrugAppearance = _sanitizeInput(drugAppearance);
+      final sql = """
+        INSERT INTO drugs (DrugName, DrugAppearance)
+        VALUES ('$sanitizedDrugName', '$sanitizedDrugAppearance');
+      """;
 
       final response = await HttpClient.instance.post(
         Uri.parse('https://project.1114580.xyz/data'),
@@ -4139,16 +4324,16 @@ Future<String?> _checkSimilarDrugName(String inputDrugName) async {
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        title: Text('找到相似的藥物名稱'),
+        title: const Text('找到相似的藥物名稱'),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text('您輸入的藥物名稱：$inputDrugName'),
-            SizedBox(height: 8),
+            const SizedBox(height: 8),
             Text('資料庫中的相似名稱：$similarDrugName'),
-            SizedBox(height: 16),
-            Text(
+            const SizedBox(height: 16),
+            const Text(
               '在資料庫裡有找到相似的名稱 請確認是否是這名稱',
               style: TextStyle(fontWeight: FontWeight.bold),
             ),
@@ -4160,19 +4345,17 @@ Future<String?> _checkSimilarDrugName(String inputDrugName) async {
               Navigator.of(context).pop();
               _showNewDrugConfirmationDialog(inputDrugName);
             },
-            child: Text('並不是這個藥名'),
+            child: const Text('並不是這個藥名'),
           ),
           ElevatedButton(
             onPressed: () async {
               Navigator.of(context).pop();
               if (mounted) {
-                setState(() {
-                  _medicationController.text = similarDrugName;
-                });
+                setState(() => _medicationController.text = similarDrugName);
                 await _saveToServer();
               }
             },
-            child: Text('確認上傳'),
+            child: const Text('確認上傳'),
           ),
         ],
       ),
@@ -4184,14 +4367,14 @@ Future<String?> _checkSimilarDrugName(String inputDrugName) async {
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        title: Text('確認新藥物'),
+        title: const Text('確認新藥物'),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text('您準備輸入的藥物名稱：$inputDrugName'),
-            SizedBox(height: 16),
-            Text(
+            const SizedBox(height: 16),
+            const Text(
               '現在尚未登記此種藥物 確認無誤後會先將藥物傳到資料庫後再更新患者資料',
               style: TextStyle(fontWeight: FontWeight.bold),
             ),
@@ -4199,10 +4382,8 @@ Future<String?> _checkSimilarDrugName(String inputDrugName) async {
         ),
         actions: [
           TextButton(
-            onPressed: () {
-              Navigator.of(context).pop();
-            },
-            child: Text('取消'),
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('取消'),
           ),
           ElevatedButton(
             onPressed: _isSaving
@@ -4210,237 +4391,154 @@ Future<String?> _checkSimilarDrugName(String inputDrugName) async {
                 : () async {
                     Navigator.of(context).pop();
                     if (!mounted) return;
-                    setState(() {
-                      _isSaving = true;
-                    });
+                    setState(() => _isSaving = true);
                     try {
-                      final success = await _addDrugToDatabase(inputDrugName,_appearanceController.text);
-                      if (!success) {
-                        throw Exception('無法將藥物名稱添加到資料庫');
-                      }
+                      final success = await _addDrugToDatabase(inputDrugName, _appearanceController.text);
+                      if (!success) throw Exception('無法將藥物名稱添加到資料庫');
                       if (mounted) {
-                        setState(() {
-                          _medicationController.text = inputDrugName;
-                        });
+                        setState(() => _medicationController.text = inputDrugName);
                         await _saveToServer(force: true);
                         if (_scaffoldMessenger != null) {
-                          _scaffoldMessenger!.showSnackBar(
-                            SnackBar(content: Text('資料保存成功')),
-                          );
+                          _scaffoldMessenger!.showSnackBar(const SnackBar(content: Text('資料保存成功')));
                         }
                       }
                     } catch (e) {
                       if (mounted && _scaffoldMessenger != null) {
-                        _scaffoldMessenger!.showSnackBar(
-                          SnackBar(content: Text('錯誤: $e')),
-                        );
+                        _scaffoldMessenger!.showSnackBar(SnackBar(content: Text('錯誤: $e')));
                       }
                     } finally {
-                      if (mounted) {
-                        setState(() {
-                          _isSaving = false;
-                        });
-                      }
+                      if (mounted) setState(() => _isSaving = false);
                     }
                   },
-            child: Text('確認上傳'),
+            child: const Text('確認上傳'),
           ),
         ],
       ),
     );
   }
 
-Future<void> _saveToServer({bool force = false}) async {
-  if (_isSaving && !force) return;
-  if (!mounted) return;
+  Future<void> _saveToServer({bool force = false}) async {
+    if (_isSaving && !force) return;
+    if (!mounted) return;
 
-  setState(() {
-    _isSaving = true;
-  });
+    setState(() => _isSaving = true);
 
-  try {
-    // 驗證必要字段
-    if (appState.currentPatientName == null ||
-        _medicationController.text.isEmpty ||
-        _selectedUsage == null ||
-        _dosageController.text.isEmpty ||
-        _daysController.text.isEmpty) {
-      throw Exception('請填寫所有必要字段');
-    }
-    final employeeId = appState.currentEmployeeId;
-    if (employeeId == null) {
-      throw Exception('未選擇員工');
-    }
+    try {
+      if (appState.currentPatientName == null || _medicationController.text.isEmpty ||
+          _selectedUsage == null || _dosageController.text.isEmpty || _daysController.text.isEmpty) {
+        throw Exception('請填寫所有必要字段');
+      }
+      final employeeId = appState.currentEmployeeId;
+      if (employeeId == null) throw Exception('未選擇員工');
 
-    final patientName = _sanitizeInput(appState.currentPatientName!);
-    final medication = _sanitizeInput(_medicationController.text);
-    final dose = _sanitizeInput(_dosageController.text);
-    final days = _sanitizeInput(_daysController.text);
+      final patientName = _sanitizeInput(appState.currentPatientName!);
+      final medication = _sanitizeInput(_medicationController.text);
+      final dose = _sanitizeInput(_dosageController.text);
+      final days = _sanitizeInput(_daysController.text);
 
-    // 驗證劑量和天數為數字
-    final doseNum = double.tryParse(dose);
-    final daysNum = int.tryParse(days);
-    if (doseNum == null || daysNum == null) {
-      throw Exception('劑量和處方天數必須為數字');
-    }
+      final doseNum = double.tryParse(dose);
+      final daysNum = int.tryParse(days);
+      if (doseNum == null || daysNum == null) throw Exception('劑量和處方天數必須為數字');
 
-    // 驗證用藥時間
-    final usageTimes = _selectedUsage!.split(',').map((e) => e.trim()).toList();
-    if (usageTimes.isEmpty) {
-      throw Exception('用藥時間無效');
-    }
+      final usageTimes = _selectedUsage!.split(',').map((e) => e.trim()).toList();
+      if (usageTimes.isEmpty) throw Exception('用藥時間無效');
 
-    final validTimes = ['早餐後', '中餐後', '晚餐後', '早餐前', '中餐前', '晚餐前', '睡前'];
-    final invalidTimes = usageTimes.where((time) => !validTimes.contains(time)).toList();
-    if (invalidTimes.isNotEmpty) {
-      throw Exception('無效的用藥時間: ${invalidTimes.join(', ')}');
-    }
-
-    // 檢查患者和藥物是否存在
-    final verificationResult = await _verifyPatientAndDrug(patientName, medication);
-
-    if (verificationResult != null) {
-      // 藥物和患者存在，直接插入資料庫
-      final patientId = verificationResult['patient_id'];
-      final drugId = verificationResult['drug_id'];
-
-      // 為每個用藥時間生成 INSERT INTO medications 和 INSERT INTO records 語句
-      final sqlStatements = usageTimes.map((timing) {
-        final sanitizedTiming = _sanitizeInput(timing);
-        return """
-          INSERT INTO medications (PatientID, DrugID, Timing, Dose, days)
-          VALUES ('$patientId', '$drugId', '$sanitizedTiming', '$dose', '$days');
-          INSERT INTO records (EmployeeID, PatientID, Type, EntryDatetime, DescribeMean)
-          VALUES (
-            '$employeeId',
-            '$patientId',
-            'ocr',
-            NOW(),
-            '新增$patientName $sanitizedTiming 的藥物進資料庫'
-          );
-        """;
-      }).join('');
-
-      // 將所有語句包裝在一個事務中
-      final sql = """
-        BEGIN;
-        $sqlStatements
-        COMMIT;
-      """;
-
-      // 準備 sql update 請求
-      final sqlUpdateRequestBody = {
-        'username': _cachedUsername,
-        'password': _cachedPassword,
-        'requestType': 'sql update',
-        'data': {'sql': sql}
-      };
-      final sqlUpdateJson = JsonEncoder.withIndent('  ').convert(sqlUpdateRequestBody);
-      if (kDebugMode) {
-        debugPrint('SQL Update Request JSON (Pretty):\n$sqlUpdateJson');
+      final validTimes = ['早餐前', '中餐前', '晚餐前', '早餐後', '中餐後', '晚餐後', '睡前'];
+      if (usageTimes.any((time) => !validTimes.contains(time))) {
+        throw Exception('無效的用藥時間');
       }
 
-      // 準備 sendDataToPC 請求
-      final sendDataToPCData = usageTimes.map((timing) {
-        return {
+      // 使用快取的驗證結果
+      final verificationResult = await _verifyPatientAndDrug(patientName, medication);
+      if (verificationResult != null) {
+        final patientId = verificationResult['patient_id'];
+        final drugId = verificationResult['drug_id'];
+
+        // 整合所有 SQL 語句為單一事務
+        final sqlStatements = usageTimes.map((timing) {
+          final sanitizedTiming = _sanitizeInput(timing);
+          return """
+            INSERT INTO medications (PatientID, DrugID, Timing, Dose, days)
+            VALUES ('$patientId', '$drugId', '$sanitizedTiming', '$dose', '$days');
+            INSERT INTO records (EmployeeID, PatientID, Type, EntryDatetime, DescribeMean)
+            VALUES ('$employeeId', '$patientId', 'ocr', NOW(), '新增$patientName $sanitizedTiming 的藥物進資料庫');
+          """;
+        }).join('');
+
+        final sql = """
+          BEGIN;
+          $sqlStatements
+          COMMIT;
+        """;
+
+        // 準備並發送單一 SQL 更新請求
+        final sqlUpdateRequestBody = {
+          'username': _cachedUsername,
+          'password': _cachedPassword,
+          'requestType': 'sql update',
+          'data': {'sql': sql}
+        };
+
+        final sqlUpdateResponse = await http.post(
+          Uri.parse('https://project.1114580.xyz/data'),
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode(sqlUpdateRequestBody),
+        );
+
+        if (sqlUpdateResponse.statusCode != 200) {
+          throw Exception('保存失敗: HTTP ${sqlUpdateResponse.statusCode}');
+        }
+
+        // 並行發送 sendDataToPC 請求
+        final homeScreenState = context.findAncestorStateOfType<_HomeScreenState>();
+        final pairCode = appState.pairCode;
+        final sendDataToPCData = usageTimes.map((timing) => {
           'patient_name': patientName,
           'medication': medication,
-          'usage': [timing], // 單個用藥時間作為陣列
+          'usage': [timing],
           'dosage': doseNum,
-          'appearance': '未知', // 暫時設為固定值，需後續確認來源
+          'appearance': _appearanceController.text.isNotEmpty ? _appearanceController.text : '未知',
           'days': daysNum,
+        }).toList();
+
+        final sendDataToPCRequestBody = {
+          'username': _cachedUsername,
+          'password': _cachedPassword,
+          'requestType': 'sendDataToPC',
+          'data': {'ocr': sendDataToPCData, 'id': pairCode}
         };
-      }).toList();
 
-      // 從 HomeScreen 獲取配對碼
-      final homeScreenState = context.findAncestorStateOfType<_HomeScreenState>();
-      final pairCode = appState.pairCode;
-
-      final sendDataToPCRequestBody = {
-        'username': _cachedUsername,
-        'password': _cachedPassword,
-        'requestType': 'sendDataToPC',
-        'data':{'ocr': sendDataToPCData ,'id': pairCode} 
-        
-      };
-      final sendDataToPCJson = JsonEncoder.withIndent('  ').convert(sendDataToPCRequestBody);
-      if (kDebugMode) {
-        debugPrint('Send Data to PC Request JSON (Pretty):\n$sendDataToPCJson');
-      }
-
-      // 並行發送兩個 HTTP 請求
-      final sqlUpdateRequest = http.post(
-        Uri.parse('https://project.1114580.xyz/data'),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode(sqlUpdateRequestBody),
-      );
-
-      final sendDataToPCRequest = http.post(
-        Uri.parse('https://connect.1114580.xyz/data'),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode(sendDataToPCRequestBody),
-      );
-
-      final responses = await Future.wait([sqlUpdateRequest, sendDataToPCRequest]);
-      final sqlUpdateResponse = responses[0];
-      final sendDataToPCResponse = responses[1];
-
-      // 檢查 sql update 請求的狀態
-      if (sqlUpdateResponse.statusCode != 200) {
-        String errorMsg = '保存失敗: HTTP ${sqlUpdateResponse.statusCode}';
-        try {
-          final errorData = jsonDecode(sqlUpdateResponse.body);
-          errorMsg = errorData['error']?.toString() ?? errorMsg;
-        } catch (_) {}
-        throw Exception(errorMsg);
-      }
-
-      // 可選：檢查 sendDataToPC 請求的狀態
-      if (sendDataToPCResponse.statusCode != 200) {
-        if (kDebugMode) {
-          debugPrint('Send Data to PC failed: HTTP ${sendDataToPCResponse.statusCode}');
-          try {
-            final errorData = jsonDecode(sendDataToPCResponse.body);
-            debugPrint('Send Data to PC error: ${errorData['error']?.toString()}');
-          } catch (_) {}
-        }
-        // 不拋出異常，僅記錄日誌，確保 sql update 的成功不受影響
-      }
-
-      if (mounted && _scaffoldMessenger != null) {
-        _scaffoldMessenger!.showSnackBar(
-          SnackBar(content: Text('資料保存成功')),
+        final sendDataToPCResponse = await http.post(
+          Uri.parse('https://connect.1114580.xyz/data'),
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode(sendDataToPCRequestBody),
         );
-        _resetForm();
-        // 直接回到前一個 PrescriptionCaptureScreen 頁面
-        Navigator.pop(context);
-        Provider.of<AppState>(context, listen: false).refreshHomeData();
-      }
-    } else {
-      // 藥物不存在，檢查是否有相似藥物
-      final similarDrug = await _checkSimilarDrugName(medication);
-      if (mounted) {
-        if (similarDrug != null) {
-          _showSimilarDrugDialog(medication, similarDrug);
-        } else {
-          _showNewDrugConfirmationDialog(medication);
+
+        if (sendDataToPCResponse.statusCode != 200) {
+          debugPrint('Send Data to PC failed: HTTP ${sendDataToPCResponse.statusCode}');
+        }
+
+        if (mounted && _scaffoldMessenger != null) {
+          _scaffoldMessenger!.showSnackBar(const SnackBar(content: Text('資料保存成功')));
+          _resetForm();
+          Navigator.pop(context);
+          Provider.of<AppState>(context, listen: false).refreshHomeData();
+        }
+      } else {
+        final similarDrug = await _checkSimilarDrugName(medication);
+        if (mounted) {
+          if (similarDrug != null) _showSimilarDrugDialog(medication, similarDrug);
+          else _showNewDrugConfirmationDialog(medication);
         }
       }
-    }
-  } catch (e) {
-    if (mounted && _scaffoldMessenger != null) {
-      _scaffoldMessenger!.showSnackBar(
-        SnackBar(content: Text('錯誤: $e')),
-      );
-    }
-  } finally {
-    if (mounted) {
-      setState(() {
-        _isSaving = false;
-      });
+    } catch (e) {
+      if (mounted && _scaffoldMessenger != null) {
+        _scaffoldMessenger!.showSnackBar(SnackBar(content: Text('錯誤: $e')));
+      }
+    } finally {
+      if (mounted) setState(() => _isSaving = false);
     }
   }
-}
 
   void _resetForm() {
     if (!mounted) return;
@@ -4512,9 +4610,7 @@ Future<void> _saveToServer({bool force = false}) async {
                 }).toList(),
                 onChanged: (String? newValue) {
                   if (newValue != null) {
-                    setState(() {
-                      _selectedUsage = newValue;
-                    });
+                    setState(() => _selectedUsage = newValue);
                   }
                 },
               ),
@@ -4528,7 +4624,6 @@ Future<void> _saveToServer({bool force = false}) async {
                   fillColor: Colors.white,
                 ),
                 keyboardType: TextInputType.number,
-
               ),
               const SizedBox(height: 16),
               TextField(
@@ -4579,6 +4674,7 @@ Future<void> _saveToServer({bool force = false}) async {
     );
   }
 }
+
 
 //員工修改
 class EmployeeManagementScreen extends StatefulWidget {
@@ -5059,13 +5155,11 @@ class _ReviewJournalScreenState extends State<ReviewJournalScreen> {
   int _offset = 0;
   bool _hasMore = true;
 
-  // 篩選條件
   String? _selectedEmployeeId;
   String? _selectedPatientId;
   String? _selectedType;
   DateTime? _selectedDate;
 
-  // 滾動控制器
   final ScrollController _scrollController = ScrollController();
 
   @override
@@ -5100,6 +5194,31 @@ class _ReviewJournalScreenState extends State<ReviewJournalScreen> {
   }
 
   Future<void> _preLoadData() async {
+    if (_appState.cachedEmployees.isNotEmpty) {
+      if (mounted) {
+        setState(() {
+          _employees = _appState.cachedEmployees;
+        });
+      }
+    }
+    if (_appState.cachedPatients.isNotEmpty) {
+      if (mounted) {
+        setState(() {
+          _patients = _appState.cachedPatients;
+        });
+      }
+    }
+    final cacheKey = _generateCacheKey();
+    final cachedRecords = _appState.getCachedRecords(cacheKey);
+    if (cachedRecords != null) {
+      if (mounted) {
+        setState(() {
+          _records = cachedRecords;
+          _isLoading = false;
+        });
+      }
+    }
+
     await Future.wait([
       _fetchEmployees(),
       _fetchPatients(),
@@ -5108,6 +5227,16 @@ class _ReviewJournalScreenState extends State<ReviewJournalScreen> {
   }
 
   Future<void> _fetchEmployees() async {
+    if (_appState.cachedEmployees.isNotEmpty) {
+      if (mounted) {
+        setState(() {
+          _employees = _appState.cachedEmployees;
+          _isLoading = _records.isEmpty;
+        });
+      }
+      return;
+    }
+
     if (_appState.centerId == null) {
       debugPrint('Center ID is null, skipping employee fetch');
       _employees = [];
@@ -5121,7 +5250,6 @@ class _ReviewJournalScreenState extends State<ReviewJournalScreen> {
         WHERE CenterID = '${_appState.centerId}' AND states = 1
       ''';
 
-      debugPrint('Sending request with username: ${_appState.usernameController.text}, centerId: ${_appState.centerId}');
       final response = await http.post(
         Uri.parse('https://project.1114580.xyz/data'),
         headers: {'Content-Type': 'application/json'},
@@ -5134,13 +5262,10 @@ class _ReviewJournalScreenState extends State<ReviewJournalScreen> {
       );
 
       if (response.statusCode != 200) {
-        debugPrint('API request failed with status: ${response.statusCode}, body: ${response.body}');
         throw Exception('伺服器錯誤: ${response.statusCode}');
       }
 
       final data = jsonDecode(response.body) as List<dynamic>;
-      debugPrint('Raw employees data: $data, length: ${data.length}');
-
       final List<Map<String, dynamic>> employees = data.map((item) {
         final employeeName = item['EmployeeName']?.toString() ?? '';
         return <String, dynamic>{
@@ -5148,6 +5273,8 @@ class _ReviewJournalScreenState extends State<ReviewJournalScreen> {
           'EmployeeName': employeeName.isEmpty ? '未知姓名' : employeeName,
         };
       }).toList();
+
+      _appState.cacheEmployees(employees);
 
       if (mounted) {
         setState(() {
@@ -5167,6 +5294,15 @@ class _ReviewJournalScreenState extends State<ReviewJournalScreen> {
   }
 
   Future<void> _fetchPatients() async {
+    if (_appState.cachedPatients.isNotEmpty) {
+      if (mounted) {
+        setState(() {
+          _patients = _appState.cachedPatients;
+        });
+      }
+      return;
+    }
+
     if (_appState.centerId == null) {
       debugPrint('Center ID is null, skipping patient fetch');
       _patients = [];
@@ -5180,7 +5316,6 @@ class _ReviewJournalScreenState extends State<ReviewJournalScreen> {
         WHERE CenterID = '${_appState.centerId}'
       ''';
 
-      debugPrint('Sending request with username: ${_appState.usernameController.text}, centerId: ${_appState.centerId}');
       final response = await http.post(
         Uri.parse('https://project.1114580.xyz/data'),
         headers: {'Content-Type': 'application/json'},
@@ -5193,13 +5328,10 @@ class _ReviewJournalScreenState extends State<ReviewJournalScreen> {
       );
 
       if (response.statusCode != 200) {
-        debugPrint('API request failed with status: ${response.statusCode}, body: ${response.body}');
         throw Exception('伺服器錯誤: ${response.statusCode}');
       }
 
       final data = jsonDecode(response.body) as List<dynamic>;
-      debugPrint('Raw patients data: $data, length: ${data.length}');
-
       final List<Map<String, dynamic>> patients = data.map((item) {
         final patientName = item['PatientName']?.toString() ?? item['PatientID']?.toString() ?? '';
         return <String, dynamic>{
@@ -5207,6 +5339,8 @@ class _ReviewJournalScreenState extends State<ReviewJournalScreen> {
           'PatientName': patientName.isEmpty ? '無名稱' : patientName,
         };
       }).toList();
+
+      _appState.cachePatients(patients);
 
       if (mounted) {
         setState(() {
@@ -5223,12 +5357,18 @@ class _ReviewJournalScreenState extends State<ReviewJournalScreen> {
     }
   }
 
+  String _generateCacheKey() {
+    return '${_selectedEmployeeId ?? ''}_${_selectedPatientId ?? ''}_${_selectedType ?? ''}_${_selectedDate?.toIso8601String() ?? ''}_$_offset';
+  }
+
   Future<void> _fetchRecords({bool isRefresh = true, bool initialLoad = false}) async {
     if (_appState.centerId == null) {
-      setState(() {
-        _errorMessage = '未找到中心 ID';
-        _isLoading = false;
-      });
+      if (mounted) {
+        setState(() {
+          _errorMessage = '未找到中心 ID';
+          _isLoading = false;
+        });
+      }
       return;
     }
 
@@ -5237,11 +5377,28 @@ class _ReviewJournalScreenState extends State<ReviewJournalScreen> {
         _offset = 0;
         _hasMore = true;
         if (!initialLoad) {
+          if (mounted) {
+            setState(() {
+              _records = [];
+              _isLoading = true;
+            });
+          }
+        }
+      }
+
+      final cacheKey = _generateCacheKey();
+      final cachedRecords = _appState.getCachedRecords(cacheKey);
+      if (cachedRecords != null && !isRefresh) {
+        if (mounted) {
           setState(() {
-            _records = [];
-            _isLoading = true;
+            _records.addAll(cachedRecords);
+            _isLoading = false;
+            _isLoadingMore = false;
+            _offset += _limit;
+            _hasMore = cachedRecords.length == _limit;
           });
         }
+        return;
       }
 
       List<String> conditions = [];
@@ -5306,13 +5463,13 @@ class _ReviewJournalScreenState extends State<ReviewJournalScreen> {
 
         if (typeResponse.statusCode == 200) {
           final typeData = jsonDecode(typeResponse.body) as List<dynamic>;
-          print('Fetched Type Data: $typeData');
           _types = typeData.map((item) => item['Type']?.toString() ?? '').toList();
-          print('Updated Types: $_types');
         } else {
           throw Exception('獲取操作類型失敗: ${typeResponse.statusCode}');
         }
       }
+
+      _appState.cacheRecords(cacheKey, records);
 
       if (mounted) {
         setState(() {
@@ -5362,7 +5519,7 @@ class _ReviewJournalScreenState extends State<ReviewJournalScreen> {
       (pat) => pat['PatientID'] == patientId,
       orElse: () => <String, dynamic>{'PatientID': '', 'PatientName': ''},
     );
-    return patient['PatientName']?.toString() ?? patientId; // 使用 PatientID 作為備用名稱
+    return patient['PatientName']?.toString() ?? patientId;
   }
 
   String _formatDateTime(String dateTimeStr) {
@@ -5403,7 +5560,7 @@ class _ReviewJournalScreenState extends State<ReviewJournalScreen> {
       );
 
       if (response.statusCode == 200) {
-        _fetchRecords(isRefresh: true); // 刷新記錄
+        _fetchRecords(isRefresh: true);
       } else {
         throw Exception('新增記錄失敗: ${response.statusCode}');
       }
@@ -5417,252 +5574,488 @@ class _ReviewJournalScreenState extends State<ReviewJournalScreen> {
   }
 
   Future<void> _selectDate(BuildContext context) async {
-    final DateTime? picked = await showDatePicker(
+    DateTime? currentSelectedDate = _selectedDate; // 臨時儲存當前選中日期
+    final DateTime? picked = await showDialog<DateTime>(
       context: context,
-      initialDate: _selectedDate ?? DateTime.now(),
-      firstDate: DateTime(2000),
-      lastDate: DateTime(2100),
+      builder: (BuildContext context) {
+        return StatefulBuilder(
+          builder: (BuildContext context, StateSetter setState) {
+            return AlertDialog(
+              title: const Text('選擇日期'),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  SizedBox(
+                    height: 300,
+                    child: CalendarDatePicker(
+                      initialDate: currentSelectedDate ?? DateTime.now(),
+                      firstDate: DateTime(2000),
+                      lastDate: DateTime(2100),
+                      onDateChanged: (DateTime value) {
+                        setState(() {
+                          currentSelectedDate = value; // 更新臨時選中日期
+                        });
+                      },
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                    children: [
+                      ElevatedButton(
+                        onPressed: () {
+                          Navigator.pop(context, null); // 取消，不改變日期
+                        },
+                        child: const Text('取消'),
+                      ),
+                      ElevatedButton(
+                        onPressed: () {
+                          Navigator.pop(context, DateTime(0)); // 清空，使用 Unix 紀元作為清空標記
+                        },
+                        child: const Text('清空'),
+                      ),
+                      ElevatedButton(
+                        onPressed: () {
+                          Navigator.pop(context, currentSelectedDate); // 確認，傳回當前選中的日期
+                        },
+                        child: const Text('確認'),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            );
+          },
+        );
+      },
     );
-    if (picked != null && mounted) {
-      setState(() {
-        _selectedDate = picked;
-      });
-      _fetchRecords();
+
+    if (picked != null) {
+      if (picked == DateTime(0)) {
+        // 檢測到清空操作
+        if (mounted) {
+          setState(() {
+            _selectedDate = null;
+          });
+          _fetchRecords();
+        }
+      } else if (picked != _selectedDate && mounted) {
+        // 正常選擇日期
+        setState(() {
+          _selectedDate = picked;
+        });
+        _fetchRecords();
+      }
     }
   }
 
   @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      behavior: HitTestBehavior.opaque,
-      onTap: () {
-        FocusScope.of(context).unfocus();
-      },
-      child: Scaffold(
-        appBar: AppBar(
-          title: const Text('審核日誌'),
-          backgroundColor: Colors.grey[300],
-          centerTitle: true,
-          actions: [
-            IconButton(
-              icon: const Icon(Icons.add),
-              onPressed: _addMedicationRecord,
-            ),
-          ],
-        ),
-        body: Column(
-          children: [
-            Padding(
-              padding: const EdgeInsets.all(8.0),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: Autocomplete<String>(
-                      optionsBuilder: (TextEditingValue textEditingValue) {
-                        final input = textEditingValue.text.trim().toLowerCase();
-                        if (input.isEmpty) {
-                          return _employees.map((emp) => emp['EmployeeName'] as String);
-                        }
-                        return _employees
-                            .map((emp) => emp['EmployeeName'] as String)
-                            .where((name) => name.toLowerCase().contains(input));
-                      },
-                      onSelected: (String selection) {
-                        final selectedEmployee = _employees.firstWhere(
-                          (emp) => emp['EmployeeName'] == selection,
-                          orElse: () => <String, dynamic>{'EmployeeID': null},
-                        );
+Widget build(BuildContext context) {
+  return GestureDetector(
+    behavior: HitTestBehavior.opaque,
+    onTap: () {
+      FocusScope.of(context).unfocus();
+    },
+    child: Scaffold(
+      appBar: AppBar(
+        title: const Text('審核日誌'),
+        backgroundColor: Colors.grey[300],
+        centerTitle: true,
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.add),
+            onPressed: _addMedicationRecord,
+          ),
+        ],
+      ),
+      body: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.all(8.0),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Autocomplete<String>(
+                    optionsBuilder: (TextEditingValue textEditingValue) {
+                      final input = textEditingValue.text.trim().toLowerCase();
+                      if (input.isEmpty) {
+                        return _employees.map((emp) => emp['EmployeeName'] as String);
+                      }
+                      return _employees
+                          .map((emp) => emp['EmployeeName'] as String)
+                          .where((name) => name.toLowerCase().contains(input));
+                    },
+                    onSelected: (String selection) {
+                      debugPrint('員工選擇: $selection'); // 添加調試日誌
+                      final selectedEmployee = _employees.firstWhere(
+                        (emp) => emp['EmployeeName'] == selection,
+                        orElse: () => <String, dynamic>{'EmployeeID': null},
+                      );
+                      if (_selectedEmployeeId != selectedEmployee['EmployeeID']) {
                         setState(() {
                           _selectedEmployeeId = selectedEmployee['EmployeeID'];
                         });
+                        FocusScope.of(context).unfocus(); // 嘗試收起鍵盤
                         _fetchRecords();
-                      },
-                      fieldViewBuilder: (context, controller, focusNode, onFieldSubmitted) {
-                        return TextField(
-                          controller: controller,
-                          focusNode: focusNode,
-                          decoration: InputDecoration(
-                            labelText: '篩選員工',
-                            border: const OutlineInputBorder(),
-                            suffixIcon: controller.text.isNotEmpty
-                                ? IconButton(
-                                    icon: const Icon(Icons.clear),
-                                    onPressed: () {
-                                      setState(() {
-                                        controller.clear();
-                                        _selectedEmployeeId = null;
-                                        FocusScope.of(context).unfocus();
-                                      });
-                                      _fetchRecords();
-                                    },
-                                  )
-                                : null,
-                          ),
-                          onSubmitted: (value) => onFieldSubmitted(),
-                        );
-                      },
-                    ),
+                      }
+                    },
+                    fieldViewBuilder: (context, controller, focusNode, onFieldSubmitted) {
+                      return TextField(
+                        controller: controller,
+                        focusNode: focusNode,
+                        decoration: InputDecoration(
+                          labelText: '篩選員工',
+                          border: const OutlineInputBorder(),
+                          suffixIcon: controller.text.isNotEmpty
+                              ? IconButton(
+                                  icon: const Icon(Icons.clear),
+                                  onPressed: () {
+                                    setState(() {
+                                      controller.clear();
+                                      _selectedEmployeeId = null;
+                                    });
+                                    _fetchRecords();
+                                  },
+                                )
+                              : null,
+                        ),
+                        onSubmitted: (value) {
+                          debugPrint('員工提交: $value'); // 添加調試日誌
+                          final selectedEmployee = _employees.firstWhere(
+                            (emp) => emp['EmployeeName'] == value,
+                            orElse: () => <String, dynamic>{'EmployeeID': null},
+                          );
+                          if (_selectedEmployeeId != selectedEmployee['EmployeeID']) {
+                            setState(() {
+                              _selectedEmployeeId = selectedEmployee['EmployeeID'];
+                            });
+                            FocusScope.of(context).unfocus();
+                            _fetchRecords();
+                          }
+                        },
+                      );
+                    },
                   ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Autocomplete<String>(
-                      optionsBuilder: (TextEditingValue textEditingValue) {
-                        final input = textEditingValue.text.trim().toLowerCase();
-                        if (input.isEmpty) {
-                          return _patients.map((pat) => pat['PatientName'] as String);
-                        }
-                        return _patients
-                            .map((pat) => pat['PatientName'] as String)
-                            .where((name) => name.toLowerCase().contains(input));
-                      },
-                      onSelected: (String selection) {
-                        final selectedPatient = _patients.firstWhere(
-                          (pat) => pat['PatientName'] == selection,
-                          orElse: () => <String, dynamic>{'PatientID': null},
-                        );
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Autocomplete<String>(
+                    optionsBuilder: (TextEditingValue textEditingValue) {
+                      final input = textEditingValue.text.trim().toLowerCase();
+                      if (input.isEmpty) {
+                        return _patients.map((pat) => pat['PatientName'] as String);
+                      }
+                      return _patients
+                          .map((pat) => pat['PatientName'] as String)
+                          .where((name) => name.toLowerCase().contains(input));
+                    },
+                    onSelected: (String selection) {
+                      debugPrint('病患選擇: $selection'); // 添加調試日誌
+                      final selectedPatient = _patients.firstWhere(
+                        (pat) => pat['PatientName'] == selection,
+                        orElse: () => <String, dynamic>{'PatientID': null},
+                      );
+                      if (_selectedPatientId != selectedPatient['PatientID']) {
                         setState(() {
                           _selectedPatientId = selectedPatient['PatientID'];
                         });
+                        FocusScope.of(context).unfocus(); // 嘗試收起鍵盤
                         _fetchRecords();
-                      },
-                      fieldViewBuilder: (context, controller, focusNode, onFieldSubmitted) {
-                        return TextField(
-                          controller: controller,
-                          focusNode: focusNode,
-                          decoration: InputDecoration(
-                            labelText: '篩選病患',
-                            border: const OutlineInputBorder(),
-                            suffixIcon: controller.text.isNotEmpty
-                                ? IconButton(
-                                    icon: const Icon(Icons.clear),
-                                    onPressed: () {
-                                      setState(() {
-                                        controller.clear();
-                                        _selectedPatientId = null;
-                                        FocusScope.of(context).unfocus();
-                                      });
-                                      _fetchRecords();
-                                    },
-                                  )
-                                : null,
-                          ),
-                          onSubmitted: (value) => onFieldSubmitted(),
-                        );
-                      },
-                    ),
+                      }
+                    },
+                    fieldViewBuilder: (context, controller, focusNode, onFieldSubmitted) {
+                      return TextField(
+                        controller: controller,
+                        focusNode: focusNode,
+                        decoration: InputDecoration(
+                          labelText: '篩選病患',
+                          border: const OutlineInputBorder(),
+                          suffixIcon: controller.text.isNotEmpty
+                              ? IconButton(
+                                  icon: const Icon(Icons.clear),
+                                  onPressed: () {
+                                    setState(() {
+                                      controller.clear();
+                                      _selectedPatientId = null;
+                                    });
+                                    _fetchRecords();
+                                  },
+                                )
+                              : null,
+                        ),
+                        onSubmitted: (value) {
+                          debugPrint('病患提交: $value'); // 添加調試日誌
+                          final selectedPatient = _patients.firstWhere(
+                            (pat) => pat['PatientName'] == value,
+                            orElse: () => <String, dynamic>{'PatientID': null},
+                          );
+                          if (_selectedPatientId != selectedPatient['PatientID']) {
+                            setState(() {
+                              _selectedPatientId = selectedPatient['PatientID'];
+                            });
+                            FocusScope.of(context).unfocus();
+                            _fetchRecords();
+                          }
+                        },
+                      );
+                    },
                   ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Autocomplete<String>(
-                      optionsBuilder: (TextEditingValue textEditingValue) {
-                        final input = textEditingValue.text.trim().toLowerCase();
-                        if (input.isEmpty) {
-                          return _types;
-                        }
-                        return _types.where((type) => type.toLowerCase().contains(input));
-                      },
-                      onSelected: (String selection) {
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Autocomplete<String>(
+                    optionsBuilder: (TextEditingValue textEditingValue) {
+                      final input = textEditingValue.text.trim().toLowerCase();
+                      if (input.isEmpty) {
+                        return _types;
+                      }
+                      return _types.where((type) => type.toLowerCase().contains(input));
+                    },
+                    onSelected: (String selection) {
+                      debugPrint('操作類型選擇: $selection'); // 添加調試日誌
+                      if (_selectedType != selection) {
                         setState(() {
                           _selectedType = selection;
                         });
+                        FocusScope.of(context).unfocus(); // 嘗試收起鍵盤
                         _fetchRecords();
-                      },
-                      fieldViewBuilder: (context, controller, focusNode, onFieldSubmitted) {
-                        return TextField(
-                          controller: controller,
-                          focusNode: focusNode,
-                          decoration: InputDecoration(
-                            labelText: '篩選操作類型',
-                            border: const OutlineInputBorder(),
-                            suffixIcon: controller.text.isNotEmpty
-                                ? IconButton(
-                                    icon: const Icon(Icons.clear),
-                                    onPressed: () {
-                                      setState(() {
-                                        controller.clear();
-                                        _selectedType = null;
-                                        FocusScope.of(context).unfocus();
-                                      });
-                                      _fetchRecords();
-                                    },
-                                  )
-                                : null,
-                          ),
-                          onSubmitted: (value) => onFieldSubmitted(),
-                        );
-                      },
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: GestureDetector(
-                      onTap: () => _selectDate(context),
-                      child: AbsorbPointer(
-                        child: TextField(
-                          controller: TextEditingController(
-                            text: _selectedDate == null
-                                ? ''
-                                : '${_selectedDate!.year}-${_selectedDate!.month.toString().padLeft(2, '0')}-${_selectedDate!.day.toString().padLeft(2, '0')}',
-                          ),
-                          decoration: InputDecoration(
-                            labelText: '篩選日期',
-                            border: const OutlineInputBorder(),
-                            suffixIcon: const Icon(Icons.calendar_today),
-                          ),
-                          readOnly: true,
+                      }
+                    },
+                    fieldViewBuilder: (context, controller, focusNode, onFieldSubmitted) {
+                      return TextField(
+                        controller: controller,
+                        focusNode: focusNode,
+                        decoration: InputDecoration(
+                          labelText: '篩選操作類型',
+                          border: const OutlineInputBorder(),
+                          suffixIcon: controller.text.isNotEmpty
+                              ? IconButton(
+                                  icon: const Icon(Icons.clear),
+                                  onPressed: () {
+                                    setState(() {
+                                      controller.clear();
+                                      _selectedType = null;
+                                    });
+                                    _fetchRecords();
+                                  },
+                                )
+                              : null,
                         ),
+                        onSubmitted: (value) {
+                          debugPrint('操作類型提交: $value'); // 添加調試日誌
+                          if (_selectedType != value) {
+                            setState(() {
+                              _selectedType = value;
+                            });
+                            FocusScope.of(context).unfocus();
+                            _fetchRecords();
+                          }
+                        },
+                      );
+                    },
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: GestureDetector(
+                    onTap: () => _selectDate(context),
+                    child: AbsorbPointer(
+                      child: TextField(
+                        controller: TextEditingController(
+                          text: _selectedDate == null
+                              ? ''
+                              : '${_selectedDate!.year}-${_selectedDate!.month.toString().padLeft(2, '0')}-${_selectedDate!.day.toString().padLeft(2, '0')}',
+                        ),
+                        decoration: const InputDecoration(
+                          labelText: '篩選日期',
+                          border: OutlineInputBorder(),
+                          suffixIcon: Icon(Icons.calendar_today),
+                        ),
+                        readOnly: true,
                       ),
                     ),
                   ),
-                ],
-              ),
+                ),
+              ],
             ),
-            Expanded(
-              child: _isLoading
-                  ? const Center(child: CircularProgressIndicator())
-                  : _errorMessage != null
-                      ? Center(child: Text(_errorMessage!, style: const TextStyle(color: Colors.red)))
-                      : _records.isEmpty
-                          ? const Center(child: Text('無日誌資料'))
-                          : ListView.builder(
-                              controller: _scrollController,
-                              physics: const AlwaysScrollableScrollPhysics(),
-                              padding: const EdgeInsets.all(12),
-                              itemCount: _records.length + (_hasMore ? 1 : 0),
-                              itemBuilder: (context, index) {
-                                if (index == _records.length && _hasMore) {
-                                  return const Center(child: CircularProgressIndicator());
-                                }
-                                final record = _records[index];
-                                final employeeName = _getEmployeeName(record['EmployeeID']);
-                                final patientName = _getPatientName(record['PatientID']);
-                                final formattedDateTime = _formatDateTime(record['EntryDatetime']);
-                                return Card(
-                                  key: ValueKey(record['EntryDatetime']),
-                                  child: Padding(
-                                    padding: const EdgeInsets.all(12.0),
-                                    child: Column(
-                                      crossAxisAlignment: CrossAxisAlignment.start,
-                                      children: [
-                                        Text(
-                                          '$employeeName ${record['DescribeMean']}',
-                                          style: const TextStyle(fontWeight: FontWeight.bold),
-                                        ),
-                                        const SizedBox(height: 4),
-                                        Text(
-                                          '操作功能: ${record['Type']}\n修改時間: $formattedDateTime',
-                                          style: const TextStyle(color: Colors.grey),
-                                        ),
-                                      ],
-                                    ),
+          ),
+          Expanded(
+            child: _isLoading
+                ? const Center(child: CircularProgressIndicator())
+                : _errorMessage != null
+                    ? Center(child: Text(_errorMessage!, style: const TextStyle(color: Colors.red)))
+                    : _records.isEmpty
+                        ? const Center(child: Text('無日誌資料'))
+                        : ListView.builder(
+                            controller: _scrollController,
+                            physics: const AlwaysScrollableScrollPhysics(),
+                            padding: const EdgeInsets.all(12),
+                            itemCount: _records.length + (_hasMore ? 1 : 0),
+                            itemBuilder: (context, index) {
+                              if (index == _records.length && _hasMore) {
+                                return const Center(child: CircularProgressIndicator());
+                              }
+                              final record = _records[index];
+                              final employeeName = _getEmployeeName(record['EmployeeID']);
+                              final patientName = _getPatientName(record['PatientID']);
+                              final formattedDateTime = _formatDateTime(record['EntryDatetime']);
+                              return Card(
+                                key: ValueKey(record['EntryDatetime']),
+                                child: Padding(
+                                  padding: const EdgeInsets.all(12.0),
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        '$employeeName ${record['DescribeMean']}',
+                                        style: const TextStyle(fontWeight: FontWeight.bold),
+                                      ),
+                                      const SizedBox(height: 4),
+                                      Text(
+                                        '操作功能: ${record['Type']}\n修改時間: $formattedDateTime',
+                                        style: const TextStyle(color: Colors.grey),
+                                      ),
+                                    ],
                                   ),
-                                );
-                              },
-                            ),
-            ),
-          ],
-        ),
+                                ),
+                              );
+                            },
+                          ),
+          ),
+        ],
       ),
-    );
+    ),
+  );
+}
+}
+//預載圖片
+class DrugImageManager {
+  static final DrugImageManager _instance = DrugImageManager._internal();
+  factory DrugImageManager() => _instance;
+  DrugImageManager._internal();
+
+  // 手動定義版本號，每次更新應用程式版本時修改此值
+  static const String appVersion = '1.0.2'; // 假設當前版本為 1.0.0
+
+  Map<String, String> _drugImagePaths = {};
+  Map<String, String> get drugImagePaths => _drugImagePaths;
+
+  Future<void> initialize(String username, String password) async {
+    final prefs = await SharedPreferences.getInstance();
+
+    // 從 SharedPreferences 中獲取儲存的版本號
+    final storedVersion = prefs.getString('appVersion');
+    debugPrint('DrugImageManager: Current version: $appVersion');
+    debugPrint('DrugImageManager: Stored version: $storedVersion');
+
+    // 檢查版本是否更新
+    bool shouldRefreshImages = storedVersion == null || storedVersion != appVersion;
+    debugPrint('DrugImageManager: Should refresh images: $shouldRefreshImages');
+
+    if (shouldRefreshImages) {
+      // 版本更新，清除圖片並重新下載
+      await _clearDrugImages();
+      await _downloadDrugImages(username, password);
+      // 更新儲存的版本號
+      await prefs.setString('appVersion', appVersion);
+      debugPrint('DrugImageManager: Updated stored version to $appVersion');
+    } else {
+      // 版本未變，從 SharedPreferences 載入圖片路徑
+      final drugPaths = prefs.getString('drugImagePaths');
+      debugPrint('DrugImageManager: Loaded drugPaths from SharedPreferences: $drugPaths');
+      if (drugPaths != null) {
+        try {
+          _drugImagePaths = Map<String, String>.from(jsonDecode(drugPaths));
+        } catch (e) {
+          debugPrint('DrugImageManager: Failed to parse drugPaths: $e');
+          _drugImagePaths = {};
+        }
+      }
+    }
+    debugPrint('DrugImageManager initialized. Paths: $_drugImagePaths');
+  }
+
+  Future<void> _clearDrugImages() async {
+    try {
+      final directory = await getApplicationDocumentsDirectory();
+      final drugImagesDir = Directory('${directory.path}/drug_images');
+      if (await drugImagesDir.exists()) {
+        await drugImagesDir.delete(recursive: true);
+        debugPrint('DrugImageManager: Cleared drug_images directory');
+      }
+      _drugImagePaths.clear();
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove('drugImagePaths');
+      debugPrint('DrugImageManager: Cleared drugImagePaths from SharedPreferences');
+    } catch (e) {
+      debugPrint('DrugImageManager: Failed to clear drug images: $e');
+    }
+  }
+  Future<void> _processImage(Map<String, dynamic> item) async {
+    final drugName = item['DrugName']?.toString().trim() ?? '';
+    final base64Image = item['drugpicture']?.toString() ?? '';
+    if (drugName.isNotEmpty && base64Image.isNotEmpty) {
+      final imageBytes = base64Decode(base64Image);
+      final directory = await getApplicationDocumentsDirectory();
+      final cleanDrugName = drugName.replaceAll(RegExp(r'[\/\\\?\*:"<>|]'), '_');
+      final imageFile = File('${directory.path}/drug_images/$cleanDrugName.png');
+      await imageFile.writeAsBytes(imageBytes);
+      _drugImagePaths[drugName] = imageFile.path;
+    }
+  }
+  Future<void> _downloadDrugImages(String username, String password) async {
+    try {
+      debugPrint('DrugImageManager: Starting download of drug images...');
+      final response = await http.post(
+        Uri.parse('https://project.1114580.xyz/data'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'requestType': 'getPhoto',
+        }),
+      );
+      
+      debugPrint('DrugImageManager: HTTP Response Status: ${response.statusCode}');
+      debugPrint('DrugImageManager: HTTP Response Body: ${response.body}');
+
+      if (response.statusCode == 200) {
+        final List<dynamic> data = jsonDecode(response.body);
+        debugPrint('DrugImageManager: Downloaded drug data: $data');
+        final directory = await getApplicationDocumentsDirectory();
+        final drugImagesDir = Directory('${directory.path}/drug_images');
+        if (!await drugImagesDir.exists()) {
+          await drugImagesDir.create(recursive: true);
+          debugPrint('DrugImageManager: Created directory at ${drugImagesDir.path}');
+        }
+
+        for (var item in data) {
+          final drugName = item['DrugName']?.toString().trim() ?? '';
+          final base64Image = item['drugpicture']?.toString() ?? '';
+
+          debugPrint('DrugImageManager: Processing drugName: $drugName');
+          if (drugName.isNotEmpty && base64Image.isNotEmpty) {
+            try {
+              final imageBytes = base64Decode(base64Image);
+              final cleanDrugName = drugName.replaceAll(RegExp(r'[\/\\\?\*:"<>|]'), '_');
+              final imageFile = File('${drugImagesDir.path}/$cleanDrugName.png');
+              await imageFile.writeAsBytes(imageBytes);
+              _drugImagePaths[drugName] = imageFile.path;
+              debugPrint('DrugImageManager: Saved image for $drugName at ${imageFile.path}');
+            } catch (e) {
+              debugPrint('DrugImageManager: Failed to decode/save image for $drugName: $e');
+            }
+          } else {
+            debugPrint('DrugImageManager: Skipped $drugName: Empty drugName or image');
+          }
+        }
+
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setString('drugImagePaths', jsonEncode(_drugImagePaths));
+        debugPrint('DrugImageManager: Saved drugImagePaths to SharedPreferences: $_drugImagePaths');
+      } else {
+        throw Exception('下載藥物圖片失敗: ${response.statusCode}');
+      }
+    } catch (e) {
+      debugPrint('DrugImageManager: 下載藥物圖片錯誤: $e');
+    }
   }
 }

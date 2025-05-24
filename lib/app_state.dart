@@ -156,6 +156,29 @@ class AppState with ChangeNotifier {
     debugPrint('AppState: Cleared all state');
     notifyListeners();
   }
+  List<Map<String, dynamic>> _cachedEmployees = [];
+  List<Map<String, dynamic>> _cachedPatients = [];
+  Map<String, List<Map<String, dynamic>>> _cachedRecords = {};
+
+  List<Map<String, dynamic>> get cachedEmployees => _cachedEmployees;
+  List<Map<String, dynamic>> get cachedPatients => _cachedPatients;
+
+  void cacheEmployees(List<Map<String, dynamic>> employees) {
+    _cachedEmployees = employees;
+    notifyListeners();
+  }
+
+  void cachePatients(List<Map<String, dynamic>> patients) {
+    _cachedPatients = patients;
+    notifyListeners();
+  }
+
+  void cacheRecords(String key, List<Map<String, dynamic>> records) {
+    _cachedRecords[key] = records;
+    notifyListeners();
+  }
+
+  List<Map<String, dynamic>>? getCachedRecords(String key) => _cachedRecords[key];
 }
 
 // Global instance
